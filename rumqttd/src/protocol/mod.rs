@@ -101,7 +101,13 @@ pub struct LastWillProperties {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Login {
     pub username: String,
-    pub password: String,
+    pub password: String
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CertInfo {
+    pub common_name: String,
+    pub organization: Option<String>,
 }
 
 //--------------------------- ConnectAck packet -------------------------------

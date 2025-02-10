@@ -1,6 +1,5 @@
 use crate::protocol::{
-    Filter, LastWill, LastWillProperties, Packet, Publish, QoS, RetainForwardRule, Subscribe,
-    Unsubscribe,
+    CertInfo, Filter, LastWill, LastWillProperties, Packet, Publish, QoS, RetainForwardRule, Subscribe, Unsubscribe
 };
 use crate::router::Ack;
 use crate::router::{
@@ -38,7 +37,7 @@ pub enum LinkError {
 
 // used to build LinkTx and LinkRx
 pub struct LinkBuilder<'a> {
-    tenant_id: Option<String>,
+    cert_info: Option<CertInfo>,
     client_id: &'a str,
     router_tx: Sender<(ConnectionId, Event)>,
     // true by default
@@ -56,7 +55,7 @@ impl<'a> LinkBuilder<'a> {
         LinkBuilder {
             client_id,
             router_tx,
-            tenant_id: None,
+            cert_info: None,
             clean_session: true,
             last_will: None,
             last_will_properties: None,
@@ -65,8 +64,8 @@ impl<'a> LinkBuilder<'a> {
         }
     }
 
-    pub fn tenant_id(mut self, tenant_id: Option<String>) -> Self {
-        self.tenant_id = tenant_id;
+    pub fn cert_info(mut self, cert_info: Option<CertInfo>) -> Self {
+        self.cert_info = cert_info;
         self
     }
 
@@ -102,7 +101,7 @@ impl<'a> LinkBuilder<'a> {
         // Connect to router
         // Local connections to the router shall have access to all subscriptions
         let mut connection = Connection::new(
-            self.tenant_id,
+            self.cert_info,
             self.client_id.to_owned(),
             self.clean_session,
             self.dynamic_filters,

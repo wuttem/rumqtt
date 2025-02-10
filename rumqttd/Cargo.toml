@@ -41,13 +41,15 @@ uuid = { version = "1.7.0", features = ["v4", "fast-rng"] }
 subtle = "2.5"
 
 [features]
-default = ["use-rustls", "websocket"]
+default = ["verify-client-cert", "use-rustls", "websocket"]
 use-rustls = ["dep:tokio-rustls", "dep:rustls-webpki", "dep:rustls-pemfile", "dep:x509-parser"]
 use-native-tls = ["dep:tokio-native-tls", "dep:x509-parser"]
 websocket = ["dep:async-tungstenite", "dep:tokio-util", "dep:futures-util", "dep:ws_stream_tungstenite"]
 verify-client-cert = []
 validate-tenant-prefix = ["verify-client-cert"]
 allow-duplicate-clientid = []
+validate-client-prefix = []
+add-tenant-to-clientid = []
 
 [dev-dependencies]
 pretty_env_logger = "0.5.0"

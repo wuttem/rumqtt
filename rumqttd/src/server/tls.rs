@@ -1,5 +1,6 @@
 use std::fs::File;
 use tokio::net::TcpStream;
+use crate::protocol::CertInfo;
 
 #[cfg(feature = "use-native-tls")]
 use {
@@ -61,27 +62,55 @@ pub enum Error {
 
 #[cfg(feature = "verify-client-cert")]
 /// Extract uid from certificate's subject organization field
-fn extract_tenant_id(der: &[u8]) -> Result<Option<String>, Error> {
+fn extract_cert_info(der: &[u8]) -> Result<Option<CertInfo>, Error> {
+    use tracing::warn;
+
+    use crate::protocol::CertInfo;
+
     let (_, cert) =
         x509_parser::parse_x509_certificate(der).map_err(|_| Error::CertificateParse)?;
-    let tenant_id = match cert.subject().iter_organization().next() {
+    let subject = cert.subject();
+    let organization = match subject.iter_organization().next() {
         Some(org) => match org.as_str() {
-            Ok(val) => val.to_string(),
-            Err(_) => return Err(Error::InvalidTenant),
+            Ok(val) => Some(val.to_string()),
+            Err(_) => None,
         },
         None => {
             #[cfg(feature = "validate-tenant-prefix")]
             return Err(Error::MissingTenantId);
             #[cfg(not(feature = "validate-tenant-prefix"))]
-            return Ok(None);
+            None
         }
     };
 
-    if tenant_id.chars().any(|c| !c.is_alphanumeric()) {
-        return Err(Error::InvalidTenantId(tenant_id));
+    let common_name = match subject.iter_common_name().next() {
+        Some(cn) => match cn.as_str() {
+            Ok(val) => Some(val.to_string()),
+            Err(_) => None
+        },
+        None => {
+            warn!("Common name missing in certificate");
+            None
+        }
+    };
+
+    // Make sure there is no . in tenant_id or common_name
+    if organization.as_ref().map(|s| s.contains('.')).unwrap_or(false) {
+        return Err(Error::InvalidTenantId(organization.unwrap()));
+    }
+    if common_name.as_ref().map(|s| s.contains('.')).unwrap_or(false) {
+        return Err(Error::InvalidTenantId(common_name.unwrap()));
     }
 
-    Ok(Some(tenant_id))
+    if common_name.is_none() {
+        warn!("Common name missing in certificate");
+        return Ok(None)
+    }
+
+    Ok(Some(CertInfo {
+        organization,
+        common_name: common_name.unwrap(),
+    }))
 }
 
 #[allow(dead_code)]
@@ -115,25 +144,25 @@ impl TLSAcceptor {
         }
     }
 
-    pub async fn accept(&self, stream: TcpStream) -> Result<(Option<String>, Box<dyn N>), Error> {
+    pub async fn accept(&self, stream: TcpStream) -> Result<(Option<CertInfo>, Box<dyn N>), Error> {
         match self {
             #[cfg(feature = "use-rustls")]
             TLSAcceptor::Rustls { acceptor } => {
                 let stream = acceptor.accept(stream).await?;
 
                 #[cfg(feature = "verify-client-cert")]
-                let tenant_id = {
+                let cert_info = {
                     let (_, session) = stream.get_ref();
                     let peer_certificates = session
                         .peer_certificates()
                         .ok_or(Error::NoPeerCertificate)?;
-                    extract_tenant_id(&peer_certificates[0])?
+                    extract_cert_info(&peer_certificates[0])?
                 };
                 #[cfg(not(feature = "verify-client-cert"))]
-                let tenant_id: Option<String> = None;
+                let cert_info: Option<CertInfo> = None;
 
                 let network = Box::new(stream);
-                Ok((tenant_id, network))
+                Ok((cert_info, network))
             }
             #[cfg(feature = "use-native-tls")]
             TLSAcceptor::NativeTLS { acceptor } => {
@@ -144,7 +173,7 @@ impl TLSAcceptor {
                 //     .peer_certificate()?
                 //     .ok_or(Error::NoPeerCertificate)?
                 //     .to_der()?;
-                // let tenant_id = extract_tenant_id(&peer_certificate)?;
+                // let tenant_id = extract_cert_info(&peer_certificate)?;
                 let network = Box::new(stream);
                 Ok((None, network))
             }

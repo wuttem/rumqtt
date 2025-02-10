@@ -37,7 +37,7 @@ fn main() {
     broker.start().unwrap();
 }
 
-async fn auth(_client_id: String, _username: String, _password: String) -> bool {
+async fn auth(_client_id: String, _username: String, _password: String, _common_name: String, _organization: String) -> bool {
     // users can fetch data from DB or tokens and use them!
     // do the verification and return true if verified, else false
     true

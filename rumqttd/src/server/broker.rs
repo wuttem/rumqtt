@@ -6,15 +6,16 @@ use crate::link::{bridge, timer};
 use crate::local::LinkBuilder;
 use crate::protocol::v4::V4;
 use crate::protocol::v5::V5;
-use crate::protocol::{Packet, Protocol};
+use crate::protocol::{CertInfo, Packet, Protocol};
 #[cfg(any(feature = "use-rustls", feature = "use-native-tls"))]
 use crate::server::tls::{self, TLSAcceptor};
 use crate::{meters, ConnectionSettings, Meter};
 use flume::{RecvError, SendError, Sender};
+use tokio::sync::broadcast::Sender as BroadcastSender;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex};
-use tracing::{error, field, info, warn, Instrument};
+use tracing::{error, field, debug, info, warn, Instrument};
 use uuid::Uuid;
 
 #[cfg(feature = "websocket")]
@@ -37,6 +38,7 @@ use crate::link::console;
 use crate::link::local::{self, LinkRx, LinkTx};
 use crate::router::{Event, Router};
 use crate::{Config, ConnectionId, ServerSettings};
+use crate::router::ClientStatus;
 
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::error::Elapsed;
@@ -64,16 +66,41 @@ pub enum Error {
     Config(String),
 }
 
+pub type RouterTx = Sender<(ConnectionId, Event)>;
+pub type ConnectionMonitorTx = BroadcastSender<ClientStatus>;
+pub type BrokerLinks = (LinkTx, LinkRx, RouterTx, ConnectionMonitorTx, ConnectionId);
+
 pub struct Broker {
     config: Arc<Config>,
     router_tx: Sender<(ConnectionId, Event)>,
+    connection_monitor_tx: BroadcastSender<ClientStatus>,
+    link_count: usize,
 }
 
 impl Broker {
     pub fn new(config: Config) -> Broker {
         let config = Arc::new(config);
         let router_config = config.router.clone();
-        let router: Router = Router::new(config.id, router_config);
+        let mut router: Router = Router::new(config.id, router_config);
+
+        //  monitor connections
+        //  take ownership of router.connection_monitor_rx
+        let (connection_monitor_tx , maybe_connection_monitor_rx) = router.take_connection_monitor();
+        // spawn a tokio task to monitor connections
+        if let Some(mut connection_monitor_rx) = maybe_connection_monitor_rx {
+            tokio::spawn(async move {
+                while let Ok(event) = connection_monitor_rx.recv().await {
+                    match event {
+                        ClientStatus::Connected(client_id) => {
+                            debug!(client_id, "Connection monitor: connected");
+                        }
+                        ClientStatus::Disconnected(client_id) => {
+                            debug!(client_id, "Connection monitor: disconnected");
+                        }
+                    }
+                }
+            });
+        }
 
         // Setup cluster if cluster settings are configured.
         match config.cluster.clone() {
@@ -87,13 +114,28 @@ impl Broker {
                 // Start router first and then cluster in the background
                 let router_tx = router.spawn();
                 // cluster.spawn();
-                Broker { config, router_tx }
+                Broker { config, router_tx, connection_monitor_tx, link_count: 0 }
             }
             None => {
                 let router_tx = router.spawn();
-                Broker { config, router_tx }
+                Broker { config, router_tx, connection_monitor_tx, link_count: 0 }
             }
         }
+
+
+    }
+
+    pub fn get_broker_links(&mut self) -> Result<BrokerLinks, local::LinkError> {
+        // generate a client_id with _broker prefix
+        // eg. _broker1
+        let client_id = format!("_broker.{}", self.link_count);
+        self.link_count += 1;
+
+        let (link_tx, link_rx) = self.link(&client_id)?;
+        let router_tx = self.router_tx.clone();
+        let connection_monitor_tx = self.connection_monitor_tx.clone();
+        let connection_id = link_tx.connection_id;
+        Ok((link_tx, link_rx, router_tx, connection_monitor_tx, connection_id))
     }
 
     // pub fn new_local_cluster(
@@ -366,12 +408,12 @@ impl<P: Protocol + Clone + Send + 'static> Server<P> {
     }
 
     // Depending on TLS or not create a new Network
-    async fn tls_accept(&self, stream: TcpStream) -> Result<(Box<dyn N>, Option<String>), Error> {
+    async fn tls_accept(&self, stream: TcpStream) -> Result<(Box<dyn N>, Option<CertInfo>), Error> {
         #[cfg(any(feature = "use-rustls", feature = "use-native-tls"))]
         match &self.config.tls {
             Some(c) => {
-                let (tenant_id, network) = TLSAcceptor::new(c)?.accept(stream).await?;
-                Ok((network, tenant_id))
+                let (cert_info, network) = TLSAcceptor::new(c)?.accept(stream).await?;
+                Ok((network, cert_info))
             }
             None => Ok((Box::new(stream), None)),
         }
@@ -400,7 +442,7 @@ impl<P: Protocol + Clone + Send + 'static> Server<P> {
                 }
             };
 
-            let (network, tenant_id) = match self.tls_accept(stream).await {
+            let (network, cert_info) = match self.tls_accept(stream).await {
                 Ok(o) => o,
                 Err(e) => {
                     error!(error=?e, "Tls accept error");
@@ -409,7 +451,7 @@ impl<P: Protocol + Clone + Send + 'static> Server<P> {
             };
 
             info!(
-                name=?self.config.name, ?addr, count, tenant=?tenant_id, "accept"
+                name=?self.config.name, ?addr, count, cert_info=?cert_info, "accept"
             );
 
             let config = config.clone();
@@ -430,7 +472,7 @@ impl<P: Protocol + Clone + Send + 'static> Server<P> {
                     task::spawn(
                         remote(
                             config,
-                            tenant_id.clone(),
+                            cert_info.clone(),
                             router_tx,
                             stream,
                             protocol,
@@ -446,7 +488,7 @@ impl<P: Protocol + Clone + Send + 'static> Server<P> {
                 LinkType::Remote => task::spawn(
                     remote(
                         config,
-                        tenant_id.clone(),
+                        cert_info.clone(),
                         router_tx,
                         network,
                         protocol,
@@ -454,7 +496,7 @@ impl<P: Protocol + Clone + Send + 'static> Server<P> {
                     )
                     .instrument(tracing::error_span!(
                         "remote_link",
-                        ?tenant_id,
+                        ?cert_info,
                         client_id = field::Empty,
                         connection_id = field::Empty,
                     )),
@@ -491,7 +533,7 @@ impl Callback for WSCallback {
 /// sending a mqtt connection packet to make the server reach its concurrent connection limit).
 async fn remote<P: Protocol>(
     config: Arc<ConnectionSettings>,
-    tenant_id: Option<String>,
+    cert_info: Option<CertInfo>,
     router_tx: Sender<(ConnectionId, Event)>,
     stream: Box<dyn N>,
     protocol: P,
@@ -506,7 +548,7 @@ async fn remote<P: Protocol>(
 
     let dynamic_filters = config.dynamic_filters;
 
-    let connect_packet = match mqtt_connect(config, &mut network).await {
+    let connect_packet = match mqtt_connect(config, &mut network, &cert_info).await {
         Ok(p) => p,
         Err(e) => {
             error!(error=?e, "Error while handling MQTT connect packet");
@@ -521,6 +563,21 @@ async fn remote<P: Protocol>(
         _ => unreachable!(),
     };
 
+    // cert_info is what we get from a client certificate
+    // client_id is what we get from the MQTT CONNECT packet
+    // the format is "client_id"
+    // if client_id is empty we can use the common_name from cert_info.
+    // otherwise we generate a random client_id
+
+    if client_id.is_empty() {
+        match &cert_info {
+            Some(cert_info) => {
+                client_id = cert_info.common_name.to_owned();
+            }
+            None => {}
+        }
+    }
+
     let mut assigned_client_id = None;
     if client_id.is_empty() {
         let uuid = Uuid::new_v4().simple();
@@ -528,11 +585,11 @@ async fn remote<P: Protocol>(
         assigned_client_id = Some(client_id.clone());
     }
 
-    if let Some(tenant_id) = &tenant_id {
-        // client_id is set to "tenant_id.client_id"
-        // this is to make sure we are consistent,
-        // as Connection uses this format of client_id
-        client_id = format!("{tenant_id}.{client_id}");
+    #[cfg(feature = "add-tenant-to-clientid")]
+    if let Some(cert_info) = &cert_info {
+        if let Some(organization) = cert_info.organization.as_ref() {
+            client_id = format!("{organization}.{client_id}");
+        }
     }
 
     if let Some(sender) = will_handlers.lock().unwrap().remove(&client_id) {
@@ -553,7 +610,7 @@ async fn remote<P: Protocol>(
     // Start the link
     let mut link = match RemoteLink::new(
         router_tx.clone(),
-        tenant_id.clone(),
+        cert_info.clone(),
         network,
         connect_packet,
         dynamic_filters,
@@ -618,6 +675,10 @@ async fn remote<P: Protocol>(
     };
 
     if publish_will {
+        let tenant_id = match cert_info {
+            Some(cert_info) => cert_info.organization,
+            None => None,
+        };
         let message = Event::PublishWill((client_id, tenant_id));
         // is this connection_id really correct at this point?
         // as we have disconnected already, some other connection

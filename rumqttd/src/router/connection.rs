@@ -1,6 +1,6 @@
 use slab::Slab;
 
-use crate::protocol::LastWillProperties;
+use crate::protocol::{CertInfo, LastWillProperties};
 use crate::Filter;
 use crate::{protocol::LastWill, Topic};
 use std::collections::{HashMap, HashSet};
@@ -38,18 +38,20 @@ pub struct Connection {
 impl Connection {
     /// Create connection state to hold identifying information of connecting device
     pub fn new(
-        tenant_id: Option<String>,
+        cert_info: Option<CertInfo>,
         client_id: String,
         clean: bool,
         dynamic_filters: bool,
     ) -> Connection {
-        // Change client id to -> tenant_id.client_id and derive topic path prefix
-        // to validate topics
-        let (client_id, tenant_prefix) = match tenant_id {
-            Some(tenant_id) => {
-                let tenant_prefix = Some("/tenants/".to_owned() + &tenant_id + "/");
-                let client_id = tenant_id + "." + &client_id;
-                (client_id, tenant_prefix)
+        let (client_id, tenant_prefix) = match cert_info {
+            Some(cert_info) => {
+                if let Some(organization) = cert_info.organization {
+                    #[cfg(feature = "add-tenant-to-clientid")]
+                    let client_id = format!("{}.{}", organization, client_id);
+                    (client_id, Some(format!("/tenants/{}/", &organization)))
+                } else {
+                    (client_id, None)
+                }
             }
             None => (client_id, None),
         };

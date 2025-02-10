@@ -21,7 +21,7 @@ use tracing_subscriber::{
 pub use link::alerts;
 pub use link::local;
 pub use link::meters;
-pub use router::{Alert, Forward, IncomingMeter, Meter, Notification, OutgoingMeter};
+pub use router::{Alert, Forward, IncomingMeter, Meter, Notification, OutgoingMeter, Event, Print, ClientStatus};
 use segments::Storage;
 pub use server::Broker;
 
@@ -45,8 +45,10 @@ pub type Cursor = (u64, u64);
 pub type ClientId = String;
 pub type AuthUser = String;
 pub type AuthPass = String;
+pub type CommonName = String;
+pub type Organization = String;
 pub type AuthHandler = Arc<
-    dyn Fn(ClientId, AuthUser, AuthPass) -> Pin<Box<dyn std::future::Future<Output = bool> + Send>>
+    dyn Fn(ClientId, AuthUser, AuthPass, CommonName, Organization) -> Pin<Box<dyn std::future::Future<Output = bool> + Send>>
         + Send
         + Sync,
 >;
@@ -121,7 +123,7 @@ pub struct ServerSettings {
 impl ServerSettings {
     pub fn set_auth_handler<F, O>(&mut self, auth_fn: F)
     where
-        F: Fn(ClientId, AuthUser, AuthPass) -> O + Send + Sync + 'static,
+        F: Fn(ClientId, AuthUser, AuthPass, CommonName, Organization) -> O + Send + Sync + 'static,
         O: IntoFuture<Output = bool> + 'static,
         O::IntoFuture: Send,
     {
@@ -157,12 +159,12 @@ pub struct ConnectionSettings {
 impl ConnectionSettings {
     pub fn set_auth_handler<F, O>(&mut self, auth_fn: F)
     where
-        F: Fn(ClientId, AuthUser, AuthPass) -> O + Send + Sync + 'static,
+        F: Fn(ClientId, AuthUser, AuthPass, CommonName, Organization) -> O + Send + Sync + 'static,
         O: IntoFuture<Output = bool> + 'static,
         O::IntoFuture: Send,
     {
-        self.external_auth = Some(Arc::new(move |client_id, username, password| {
-            let auth = auth_fn(client_id, username, password).into_future();
+        self.external_auth = Some(Arc::new(move |client_id, username, password, cn, org| {
+            let auth = auth_fn(client_id, username, password, cn, org).into_future();
             Box::pin(auth)
         }));
     }

@@ -10,6 +10,7 @@ use crate::router::{ConnectionEvents, Forward};
 use crate::segments::Position;
 use crate::*;
 use flume::{bounded, Receiver, RecvError, Sender, TryRecvError};
+use tokio::sync::broadcast;
 use slab::Slab;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::str::Utf8Error;
@@ -54,6 +55,20 @@ pub enum RouterError {
 
 // TODO: set this to some appropriate value
 const TOPIC_ALIAS_MAX: u16 = 4096;
+
+#[derive(Debug, Clone)]
+pub enum ClientStatus {
+    Connected(String),
+    Disconnected(String),
+}
+
+#[cfg(feature = "validate-client-prefix")]
+pub fn split_client_id(client_id: &str) -> (&str, Option<&str>) {
+    let mut parts = client_id.splitn(2, '.');
+    let tenant_id = parts.next();
+    let client_id = parts.next().unwrap_or(client_id);
+    (client_id, tenant_id)
+}
 
 pub struct Router {
     id: RouterId,
@@ -102,6 +117,9 @@ pub struct Router {
     shared_subscriptions: HashMap<String, SharedGroup>,
     /// Will messages per client_id
     last_wills: HashMap<String, (LastWill, Option<LastWillProperties>)>,
+    /// Client Connection event
+    connection_monitor_tx: broadcast::Sender<ClientStatus>,
+    connection_monitor_rx: Option<broadcast::Receiver<ClientStatus>>,
 }
 
 impl Router {
@@ -119,6 +137,8 @@ impl Router {
             router_id,
             ..RouterMeter::default()
         };
+
+        let (conn_tx, conn_rx) = broadcast::channel::<ClientStatus>(100);
 
         let max_connections = config.max_connections;
         Router {
@@ -143,7 +163,13 @@ impl Router {
             cache: Some(VecDeque::with_capacity(MAX_CHANNEL_CAPACITY)),
             shared_subscriptions: HashMap::new(),
             last_wills: HashMap::new(),
+            connection_monitor_tx: conn_tx,
+            connection_monitor_rx: Some(conn_rx),
         }
+    }
+
+    pub fn take_connection_monitor(&mut self) -> (broadcast::Sender<ClientStatus>, Option<broadcast::Receiver<ClientStatus>>) {
+        (self.connection_monitor_tx.clone(), self.connection_monitor_rx.take())
     }
 
     /// Gets handle to the router. This is not a public method to ensure that link
@@ -354,11 +380,13 @@ impl Router {
             );
         }
 
+        let full_client_id = connection.client_id.to_owned();
         let connection_id = self.connections.insert(connection);
         assert_eq!(self.ibufs.insert(incoming), connection_id);
         assert_eq!(self.obufs.insert(outgoing), connection_id);
 
         self.connection_map.insert(client_id.clone(), connection_id);
+        self.connection_monitor_tx.send(ClientStatus::Connected(full_client_id)).ok();
         info!(connection_id, "Client connection registered");
 
         assert_eq!(self.ackslog.insert(ackslog), connection_id);
@@ -457,6 +485,7 @@ impl Router {
         let mut tracker = self.scheduler.remove(id);
         self.connection_map.remove(&client_id);
         self.ackslog.remove(id);
+        self.connection_monitor_tx.send(ClientStatus::Disconnected(connection.client_id.to_owned())).ok();
 
         // Don't remove connection id from readyqueue with index. This will
         // remove wrong connection from readyqueue. Instead just leave disconnected
@@ -1216,6 +1245,18 @@ fn append_to_commitlog(
 
     let topic = std::str::from_utf8(&publish.topic)?;
 
+    // Ensure that clients can only publish to topics with their own client_id in it
+    #[cfg(feature = "validate-client-prefix")]
+    if connection.client_id.starts_with("_broker") {
+        // Broker Connection can publish to any topic
+    } else {
+        let (client_id, _) = split_client_id(&connection.client_id);
+        if !topic.contains(&client_id) {
+            warn!(client_id, topic, "Client tried to publish to a topic that doesn't contain its client_id");
+            return Err(RouterError::InvalidClientId("Not allowed to publish to this topic".to_owned()));
+        }
+    }
+
     // Ensure that only clients associated with a tenant can publish to tenant's topic
     #[cfg(feature = "validate-tenant-prefix")]
     if let Some(tenant_prefix) = &connection.tenant_prefix {
@@ -1725,6 +1766,17 @@ fn validate_subscription(
         filter.path,
         connection.tenant_prefix
     );
+
+    // Broker Connection can subscribe to any topic
+    if connection.client_id.starts_with("_broker") {
+        return Ok(())
+    }
+
+    // Everyone can subscribe to topics starting with public
+    if filter.path.starts_with("public") {
+        return Ok(());
+    }
+
     // Ensure that only client devices of the tenant can
     #[cfg(feature = "validate-tenant-prefix")]
     if let Some(tenant_prefix) = &connection.tenant_prefix {
@@ -1732,6 +1784,17 @@ fn validate_subscription(
             return Err(RouterError::InvalidFilterPrefix(filter.path.to_owned()));
         }
     }
+
+    // Ensure that clients can only subscribe to topics that have their client_id in them
+    #[cfg(feature = "validate-client-prefix")]
+    {
+        let (client_id, _) = split_client_id(&connection.client_id);
+        if !filter.path.contains(client_id) {
+            warn!("Client tried to subscribe to a topic that doesn't contain its client_id");
+            return Err(RouterError::InvalidFilterPrefix(filter.path.to_owned()));
+        }
+    }
+    
 
     if filter.path.starts_with('$') && !filter.path.starts_with("$share") {
         return Err(RouterError::InvalidFilterPrefix(filter.path.to_owned()));

@@ -27,7 +27,7 @@ mod waiters;
 
 pub use alertlog::Alert;
 pub use connection::Connection;
-pub use routing::Router;
+pub use routing::{Router, ClientStatus};
 pub use waiters::Waiters;
 
 pub const MAX_SCHEDULE_ITERATIONS: usize = 100;
