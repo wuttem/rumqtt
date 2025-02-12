@@ -50,6 +50,7 @@ validate-tenant-prefix = ["verify-client-cert"]
 allow-duplicate-clientid = []
 validate-client-prefix = []
 add-tenant-to-clientid = []
+allow_system_topics = []
 
 [dev-dependencies]
 pretty_env_logger = "0.5.0"

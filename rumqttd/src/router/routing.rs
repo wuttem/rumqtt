@@ -1794,9 +1794,13 @@ fn validate_subscription(
             return Err(RouterError::InvalidFilterPrefix(filter.path.to_owned()));
         }
     }
-    
 
-    if filter.path.starts_with('$') && !filter.path.starts_with("$share") {
+    #[cfg(feature = "allow_system_topics")]
+    if filter.path.to_lowercase().starts_with("$sys") {
+        return Err(RouterError::InvalidFilterPrefix(filter.path.to_owned()));
+    }
+    #[cfg(not(feature = "allow_system_topics"))]
+    if filter.path.starts_with('$') && !filter.path.to_lowercase().starts_with("$share") {
         return Err(RouterError::InvalidFilterPrefix(filter.path.to_owned()));
     }
 
