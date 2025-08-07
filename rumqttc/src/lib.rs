@@ -563,6 +563,11 @@ impl MqttOptions {
         self.last_will.clone()
     }
 
+    pub fn set_client_id(&mut self, client_id: String) -> &mut Self {
+        self.client_id = client_id;
+        self
+    }
+
     pub fn set_transport(&mut self, transport: Transport) -> &mut Self {
         self.transport = transport;
         self
@@ -595,7 +600,7 @@ impl MqttOptions {
         self.client_id.clone()
     }
 
-    /// Set packet size limit for outgoing an incoming packets
+    /// Set packet size limit for outgoing and incoming packets
     pub fn set_max_packet_size(&mut self, incoming: usize, outgoing: usize) -> &mut Self {
         self.max_incoming_packet_size = incoming;
         self.max_outgoing_packet_size = outgoing;
