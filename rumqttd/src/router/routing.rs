@@ -1623,11 +1623,18 @@ fn forward_device_data(
                 properties = Some(props);
             }
 
+            // Get client info from connection
+            let client = ClientInfo {
+                client_id: connection.client_id.clone(),
+                tenant: connection.tenant_prefix.clone(),
+            };
+
             Forward {
                 cursor: offset,
                 size: 0,
                 publish,
                 properties,
+                client
             }
         });
 

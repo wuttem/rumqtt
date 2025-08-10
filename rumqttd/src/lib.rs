@@ -47,11 +47,18 @@ pub type AuthUser = String;
 pub type AuthPass = String;
 pub type CommonName = String;
 pub type Organization = String;
+pub type Tenant = Option<String>;
 pub type AuthHandler = Arc<
     dyn Fn(ClientId, AuthUser, AuthPass, CommonName, Organization) -> Pin<Box<dyn std::future::Future<Output = bool> + Send>>
         + Send
         + Sync,
 >;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientInfo {
+    pub client_id: ClientId,
+    pub tenant: Tenant,
+}
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub struct Config {

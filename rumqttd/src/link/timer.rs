@@ -3,17 +3,17 @@ use std::time::Duration;
 
 use crate::{router::Event, MetricType};
 use crate::{ConnectionId, MetricSettings};
-use flume::{SendError, Sender};
+use flume::{Sender};
 use tokio::select;
 use tracing::error;
 
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("Channel send error")]
-    Send(#[from] SendError<(ConnectionId, Event)>),
-    #[error("Timeout = {0}")]
-    Elapsed(#[from] tokio::time::error::Elapsed),
-}
+// #[derive(Debug, thiserror::Error)]
+// pub enum Error {
+//     #[error("Channel send error")]
+//     Send(#[from] SendError<(ConnectionId, Event)>),
+//     #[error("Timeout = {0}")]
+//     Elapsed(#[from] tokio::time::error::Elapsed),
+// }
 
 pub async fn start(
     config: HashMap<MetricType, MetricSettings>,

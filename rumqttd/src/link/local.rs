@@ -158,7 +158,7 @@ impl LinkTx {
         }
     }
 
-    pub fn buffer(&self) -> MutexGuard<RawMutex, VecDeque<Packet>> {
+    pub fn buffer(&self) -> MutexGuard<'_, RawMutex, VecDeque<Packet>> {
         self.recv_buffer.lock()
     }
 

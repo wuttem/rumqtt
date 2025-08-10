@@ -1,6 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
-    fmt,
+    collections::{HashMap, HashSet, VecDeque}
 };
 
 use bytes::Bytes;
@@ -11,8 +10,7 @@ use crate::{
         ConnAck, ConnAckProperties, Disconnect, DisconnectProperties, Packet, PingResp, PubAck,
         PubAckProperties, PubComp, PubCompProperties, PubRec, PubRecProperties, PubRel,
         PubRelProperties, Publish, PublishProperties, SubAck, SubAckProperties, UnsubAck,
-    },
-    ConnectionId, Filter, RouterId, Topic,
+    }, ClientInfo, ConnectionId, Filter, RouterId, Topic
 };
 
 mod alertlog;
@@ -116,6 +114,7 @@ pub struct Forward {
     pub size: usize,
     pub publish: Publish,
     pub properties: Option<PublishProperties>,
+    pub client: ClientInfo,
 }
 
 #[derive(Debug, Clone)]
@@ -208,47 +207,47 @@ pub enum Request {
 }
 
 /// A single message from connection to router
-pub struct Message {
-    /// Log to sweep
-    pub topic: String,
-    /// Qos of the topic
-    pub _qos: u8,
-    /// Reply data chain
-    pub payload: Bytes,
-}
+// pub struct Message {
+//     /// Log to sweep
+//     pub topic: String,
+//     /// Qos of the topic
+//     pub _qos: u8,
+//     /// Reply data chain
+//     pub payload: Bytes,
+// }
 
-impl fmt::Debug for Message {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Topic = {:?}, Payload size = {}",
-            self.topic,
-            self.payload.len()
-        )
-    }
-}
+// impl fmt::Debug for Message {
+//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//         write!(
+//             f,
+//             "Topic = {:?}, Payload size = {}",
+//             self.topic,
+//             self.payload.len()
+//         )
+//     }
+// }
 
 /// A batch of messages from connection to router
-pub struct Data {
-    /// (segment, offset) tuples per replica (1 native and 2 replicas)
-    pub offset: (u64, u64),
-    /// Payload size
-    pub size: usize,
-    /// Reply data chain
-    pub payload: Vec<Publish>,
-}
+// pub struct Data {
+//     /// (segment, offset) tuples per replica (1 native and 2 replicas)
+//     pub offset: (u64, u64),
+//     /// Payload size
+//     pub size: usize,
+//     /// Reply data chain
+//     pub payload: Vec<Publish>,
+// }
 
-impl fmt::Debug for Data {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Cursors = {:?}, Payload size = {}, Payload count = {}",
-            self.offset,
-            self.size,
-            self.payload.len()
-        )
-    }
-}
+// impl fmt::Debug for Data {
+//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//         write!(
+//             f,
+//             "Cursors = {:?}, Payload size = {}, Payload count = {}",
+//             self.offset,
+//             self.size,
+//             self.payload.len()
+//         )
+//     }
+// }
 
 // #[derive(Debug, Clone)]
 // pub struct Disconnection {
