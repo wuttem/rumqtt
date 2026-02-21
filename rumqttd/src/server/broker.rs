@@ -125,6 +125,29 @@ impl Broker {
 
     }
 
+    // pub fn get_broker_links(&mut self) -> Result<BrokerLinks, local::LinkError> {
+    //     // generate a client_id with _broker prefix
+    //     // eg. _broker1
+    //     let client_id = format!("_broker.{}", self.link_count);
+    //     self.link_count += 1;
+    //
+    //     let (link_tx, link_rx) = self.link(&client_id)?;
+    //     let router_tx = self.router_tx.clone();
+    //     let connection_monitor_tx = self.connection_monitor_tx.clone();
+    //     let connection_id = link_tx.connection_id;
+    //     Ok((link_tx, link_rx, router_tx, connection_monitor_tx, connection_id))
+    // }
+
+    pub fn controller(&self) -> crate::server::BrokerController {
+        crate::server::BrokerController::new(self.router_tx.clone())
+    }
+
+    pub fn admin_link(&self, client_id: &str) -> Result<crate::link::admin::AdminLink, local::LinkError> {
+        let (mut tx, rx) = self.link(client_id)?;
+        tx.subscribe("#")?;
+        Ok(crate::link::admin::AdminLink::new(tx, rx))
+    }
+
     pub fn get_broker_links(&mut self) -> Result<BrokerLinks, local::LinkError> {
         // generate a client_id with _broker prefix
         // eg. _broker1

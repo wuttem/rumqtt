@@ -22,7 +22,7 @@ use tracing::{debug, error, info, trace, warn};
 use super::alertlog::{Alert, AlertLog};
 use super::graveyard::Graveyard;
 use super::iobufs::{Incoming, Outgoing};
-use super::logs::{AckLog, DataLog};
+use super::logs::{AckLog, DataLog, PublishData};
 use super::scheduler::{ScheduleReason, Scheduler};
 use super::shared_subs::SharedGroup;
 use super::{
@@ -53,7 +53,6 @@ pub enum RouterError {
     Disconnect(DisconnectReasonCode),
 }
 
-// TODO: set this to some appropriate value
 const TOPIC_ALIAS_MAX: u16 = 4096;
 
 #[derive(Debug, Clone)]
@@ -287,6 +286,35 @@ impl Router {
                 #[cfg(feature = "validate-tenant-prefix")]
                 _tenant_id,
             ),
+            Event::GetClients(tx) => self.handle_get_clients(tx),
+            Event::ForceDisconnect(client_id) => self.handle_force_disconnect(client_id),
+        }
+    }
+
+    fn handle_get_clients(&mut self, tx: flume::Sender<Vec<ClientInfo>>) {
+        let clients = self.connections.iter()
+            .map(|(_, c)| {
+                let tenant = c.tenant_prefix.as_ref().map(|p| {
+                   p.trim_start_matches("/tenants/").trim_end_matches('/').to_owned()
+                });
+
+                ClientInfo {
+                    client_id: c.client_id.clone(),
+                    tenant,
+                }
+            })
+            .collect();
+        
+        if let Err(e) = tx.send(clients) {
+             error!("Failed to return client list: {}", e);
+        }
+    }
+
+    fn handle_force_disconnect(&mut self, client_id: String) {
+        if let Some(id) = self.connection_map.get(&client_id).copied() {
+             self.handle_disconnection(id, Some(DisconnectReasonCode::AdministrativeAction));
+        } else {
+             error!("Can't force disconnect {}, client not found", client_id);
         }
     }
 
@@ -559,9 +587,7 @@ impl Router {
         self.router_meters.total_connections -= 1;
     }
 
-    /// Handles new incoming data on a topic
     fn handle_device_payload(&mut self, id: ConnectionId) {
-        // TODO: Retun errors and move error handling to the caller
         let incoming = match self.ibufs.get_mut(id) {
             Some(v) => v,
             None => {
@@ -582,7 +608,7 @@ impl Router {
         let mut disconnect = false;
         let mut disconnect_reason: Option<DisconnectReasonCode> = None;
 
-        // info!("{:15.15}[I] {:20} count = {}", client_id, "packets", packets.len());
+
 
         for packet in packets.drain(0..) {
             match packet {
@@ -1157,6 +1183,7 @@ impl Router {
             properties,
             &mut self.datalog,
             &mut self.notifications,
+            client_id,
             #[cfg(feature = "validate-tenant-prefix")]
             tenant_prefix,
         ) {
@@ -1271,7 +1298,7 @@ fn append_to_commitlog(
     if publish.payload.is_empty() {
         datalog.remove_from_retained_publishes(topic.to_owned());
     } else if publish.retain {
-        datalog.insert_to_retained_publishes(publish.clone(), properties.clone(), topic.to_owned());
+        datalog.insert_to_retained_publishes(publish.clone(), properties.clone(), topic.to_owned(), connection.client_id.clone());
     }
 
     // after recording retained message, we also send that message to existing subscribers
@@ -1294,8 +1321,8 @@ fn append_to_commitlog(
     let mut o = (0, 0);
     for filter_idx in filter_idxs {
         let datalog = datalog.native.get_mut(filter_idx).unwrap();
-        let publish_data = (publish.clone(), properties.clone());
-        let (offset, filter) = datalog.append(publish_data.into(), notifications);
+        let publish_data = PublishData::new(publish.clone(), properties.clone(), connection.client_id.clone());
+        let (offset, filter) = datalog.append(publish_data, notifications);
         debug!(
             pkid,
             "Appended to commitlog: {}[{}, {})", filter, offset.0, offset.1,
@@ -1304,7 +1331,7 @@ fn append_to_commitlog(
         o = offset;
     }
 
-    // error!("{:15.15}[E] {:20} topic = {}", connections[id].client_id, "no-filter", topic);
+
     Ok(o)
 }
 
@@ -1313,6 +1340,7 @@ fn append_will_message(
     properties: Option<PublishProperties>,
     datalog: &mut DataLog,
     notifications: &mut VecDeque<(ConnectionId, DataRequest)>,
+    client_id: String,
     #[cfg(feature = "validate-tenant-prefix")] tenant_prefix: Option<String>,
 ) -> Result<Offset, RouterError> {
     // TODO: broker should properly send the disconnect packet!
@@ -1342,7 +1370,7 @@ fn append_will_message(
     if publish.payload.is_empty() {
         datalog.remove_from_retained_publishes(topic.to_owned());
     } else if publish.retain {
-        datalog.insert_to_retained_publishes(publish.clone(), properties.clone(), topic.to_owned());
+        datalog.insert_to_retained_publishes(publish.clone(), properties.clone(), topic.to_owned(), client_id.clone());
     }
 
     // after recording retained message, we also send that message to existing subscribers
@@ -1360,8 +1388,8 @@ fn append_will_message(
     let mut o = (0, 0);
     for filter_idx in filter_idxs {
         let datalog = datalog.native.get_mut(filter_idx).unwrap();
-        let publish_data = (publish.clone(), properties.clone());
-        let (offset, filter) = datalog.append(publish_data.into(), notifications);
+        let publish_data = PublishData::new(publish.clone(), properties.clone(), client_id.clone());
+        let (offset, filter) = datalog.append(publish_data, notifications);
         debug!(
             pkid,
             "Appended to commitlog: {}[{}, {})", filter, offset.0, offset.1,
@@ -1509,7 +1537,7 @@ fn forward_device_data(
         let mut retained_publishes = datalog.read_retained_messages(&request.filter);
         retained_publishes.truncate(inflight_slots as usize);
 
-        publishes.extend(retained_publishes.into_iter().map(|p| (p, None)));
+        publishes.extend(retained_publishes.into_iter().map(|(p, props, client_id)| (p, props, client_id, None)));
         inflight_slots -= publishes.len() as u64;
 
         // we only want to forward retained messages once
@@ -1528,7 +1556,7 @@ fn forward_device_data(
     publishes.extend(
         publishes_from_datalog
             .into_iter()
-            .map(|(p, offset)| (p, Some(offset))),
+            .map(|((p, props, client_id), offset)| (p, props, client_id, Some(offset))),
     );
 
     let (start, next, caughtup) = match next {
@@ -1601,7 +1629,7 @@ fn forward_device_data(
     // Fill and notify device data
     let forwards = publishes
         .into_iter()
-        .map(|((mut publish, mut properties), offset)| {
+        .map(|(mut publish, mut properties, client_id, offset)| {
             publish.qos = protocol::qos(qos).unwrap();
 
             // if there is some topic alias to use, set it in publish properties
@@ -1625,7 +1653,7 @@ fn forward_device_data(
 
             // Get client info from connection
             let client = ClientInfo {
-                client_id: connection.client_id.clone(),
+                client_id,
                 tenant: connection.tenant_prefix.clone(),
             };
 

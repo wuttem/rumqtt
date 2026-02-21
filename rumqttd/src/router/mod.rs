@@ -63,6 +63,10 @@ pub enum Event {
     PrintStatus(Print),
     /// Publish Will message
     PublishWill((String, Option<String>)),
+    /// Get all connected clients
+    GetClients(flume::Sender<Vec<ClientInfo>>),
+    /// Force disconnect a client
+    ForceDisconnect(String),
 }
 
 /// Notification from router to connection

@@ -56,3 +56,5 @@ allow_system_topics = []
 pretty_env_logger = "0.5.0"
 config = "0.14"
 pretty_assertions = "1.4.0"
+rumqttc = { path = "../rumqttc" }
+tokio = { version = "1.36", features = ["full"] }

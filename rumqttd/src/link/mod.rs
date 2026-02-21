@@ -1,4 +1,5 @@
 pub mod alerts;
+pub mod admin;
 pub mod bridge;
 pub mod console;
 pub mod local;

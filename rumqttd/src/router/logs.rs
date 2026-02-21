@@ -22,14 +22,16 @@ pub struct PublishData {
     pub publish: Publish,
     pub properties: Option<PublishProperties>,
     pub timestamp: Instant,
+    pub client_id: String,
 }
 
-impl From<PubWithProp> for PublishData {
-    fn from((publish, properties): PubWithProp) -> Self {
+impl PublishData {
+    pub fn new(publish: Publish, properties: Option<PublishProperties>, client_id: String) -> PublishData {
         PublishData {
             publish,
             properties,
             timestamp: Instant::now(),
+            client_id,
         }
     }
 }
@@ -39,7 +41,7 @@ impl Storage for PublishData {
     // TODO: calculate size of publish properties as well!
     fn size(&self) -> usize {
         let publish = &self.publish;
-        4 + publish.topic.len() + publish.payload.len()
+        4 + publish.topic.len() + publish.payload.len() + self.client_id.len()
     }
 }
 
@@ -177,7 +179,7 @@ impl DataLog {
         filter_idx: FilterIdx,
         offset: Offset,
         len: u64,
-    ) -> io::Result<(Position, Vec<(PubWithProp, Offset)>)> {
+    ) -> io::Result<(Position, Vec<((Publish, Option<PublishProperties>, String), Offset)>)> {
         // unwrap to get index of `self.native` is fine here, because when a new subscribe packet
         // arrives in `Router::handle_device_payload`, it first calls the function
         // `next_native_offset` which creates a new commitlog if one doesn't exist. So any new
@@ -219,15 +221,15 @@ impl DataLog {
         // no need to include timestamp when returning
         let o = o
             .into_iter()
-            .map(|(pubdata, offset)| ((pubdata.publish, pubdata.properties), offset))
+            .map(|(pubdata, offset)| ((pubdata.publish, pubdata.properties, pubdata.client_id), offset))
             .collect();
 
         Ok((next, o))
     }
 
-    pub fn shadow(&mut self, filter: &str) -> Option<PubWithProp> {
+    pub fn shadow(&mut self, filter: &str) -> Option<(Publish, Option<PublishProperties>, String)> {
         let data = self.native.get_mut(*self.filter_indexes.get(filter)?)?;
-        data.log.last().map(|p| (p.publish, p.properties))
+        data.log.last().map(|p| (p.publish, p.properties, p.client_id))
     }
 
     /// This method is called when the subscriber has caught up with the commit log. In which case,
@@ -260,16 +262,17 @@ impl DataLog {
         publish: Publish,
         publish_properties: Option<PublishProperties>,
         topic: Topic,
+        client_id: String,
     ) {
-        let pub_with_props = (publish, publish_properties);
-        self.retained_publishes.insert(topic, pub_with_props.into());
+        let pub_data = PublishData::new(publish, publish_properties, client_id);
+        self.retained_publishes.insert(topic, pub_data);
     }
 
     pub fn remove_from_retained_publishes(&mut self, topic: Topic) {
         self.retained_publishes.remove(&topic);
     }
 
-    pub fn read_retained_messages(&mut self, filter: &str) -> Vec<PubWithProp> {
+    pub fn read_retained_messages(&mut self, filter: &str) -> Vec<(Publish, Option<PublishProperties>, String)> {
         trace!(info = "reading retain msg", filter = &filter);
         let now = Instant::now();
 
@@ -303,7 +306,7 @@ impl DataLog {
         self.retained_publishes
             .iter()
             .filter(|(topic, _)| matches(topic, filter))
-            .map(|(_, p)| (p.publish.clone(), p.properties.clone()))
+            .map(|(_, p)| (p.publish.clone(), p.properties.clone(), p.client_id.clone()))
             .collect()
     }
 }

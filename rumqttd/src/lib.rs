@@ -21,9 +21,10 @@ use tracing_subscriber::{
 pub use link::alerts;
 pub use link::local;
 pub use link::meters;
+pub use link::admin::AdminLink;
 pub use router::{Alert, Forward, IncomingMeter, Meter, Notification, OutgoingMeter, Router, Event, Print, ClientStatus};
 use segments::Storage;
-pub use server::{Broker, LinkType, Server};
+pub use server::{Broker, LinkType, Server, BrokerController};
 
 pub use self::router::shared_subs::Strategy;
 
