@@ -48,8 +48,10 @@ In your `rumqttd.toml`, you specify a `capath` inside your TLS server settings.
 [v4.1.tls]
 certpath = "broker.crt"
 keypath = "broker.key"
-capath = "root_ca.crt" # <- The Root CA verifying all clients!
+capath = "ca_certs" # <- Can be either a single Root CA file, or a directory!
 ```
+
+If `capath` is a directory, `rumqttd` will automatically iterate through all files within it and register every valid `.pem` / `.crt` file it finds into its root trust store! This allows each Tenant to supply and use their own distinct CA root certificate without relying on a central authority.
 
 ### Supporting Multiple Organizations
 The `capath` acts as a broad "Trust Anchor" configuration for the rustls acceptor limit. All client certificates signed directly (or via an intermediate) by this `root_ca.crt` will be fundamentally **cryptographically trusted** by the broker.

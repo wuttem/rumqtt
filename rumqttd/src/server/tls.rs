@@ -244,17 +244,41 @@ impl TLSAcceptor {
         // client authentication with a CA. CA isn't required otherwise
         #[cfg(feature = "verify-client-cert")]
         let builder = {
-            let ca_file = File::open(ca_path);
-            let ca_file = ca_file.map_err(|_| Error::CaFileNotFound(ca_path.clone()))?;
-            let ca_file = &mut BufReader::new(ca_file);
-            let ca_cert = rustls_pemfile::certs(ca_file)
-                .next()
-                .ok_or_else(|| Error::InvalidCACert(ca_path.to_string()))??;
-
             let mut store = RootCertStore::empty();
-            store
-                .add(ca_cert)
-                .map_err(|_| Error::InvalidCACert(ca_path.to_string()))?;
+            let ca_path_obj = std::path::Path::new(ca_path);
+            
+            if ca_path_obj.is_dir() {
+                // Read all files in the given directory
+                let entries = std::fs::read_dir(ca_path_obj)
+                    .map_err(|_| Error::CaFileNotFound(ca_path.clone()))?;
+                
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_file() {
+                        if let Ok(ca_file) = File::open(&path) {
+                            let mut ca_file = BufReader::new(ca_file);
+                            for cert in rustls_pemfile::certs(&mut ca_file) {
+                                if let Ok(ca_cert) = cert {
+                                    store.add(ca_cert).ok();
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                let ca_file = File::open(ca_path);
+                let ca_file = ca_file.map_err(|_| Error::CaFileNotFound(ca_path.clone()))?;
+                let mut ca_file = BufReader::new(ca_file);
+                for cert in rustls_pemfile::certs(&mut ca_file) {
+                    if let Ok(ca_cert) = cert {
+                        store.add(ca_cert).ok();
+                    }
+                }
+            }
+
+            if store.is_empty() {
+                return Err(Error::InvalidCACert(ca_path.to_string()));
+            }
 
             // This will only return an error if no trust anchors are provided or invalid CRLs are
             // provided. We always provide a trust anchor, and don't provide any CRLs, so it is safe
