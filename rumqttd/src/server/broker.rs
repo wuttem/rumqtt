@@ -571,7 +571,7 @@ async fn remote<P: Protocol>(
 
     let dynamic_filters = config.dynamic_filters;
 
-    let connect_packet = match mqtt_connect(config, &mut network, &cert_info).await {
+    let (connect_packet, client_info) = match mqtt_connect(config, &mut network, &cert_info).await {
         Ok(p) => p,
         Err(e) => {
             error!(error=?e, "Error while handling MQTT connect packet");
@@ -585,6 +585,12 @@ async fn remote<P: Protocol>(
         }
         _ => unreachable!(),
     };
+
+    let mut tenant_id = None;
+    if let Some(info) = client_info {
+        client_id = info.client_id;
+        tenant_id = info.tenant;
+    }
 
     // cert_info is what we get from a client certificate
     // client_id is what we get from the MQTT CONNECT packet
@@ -698,10 +704,10 @@ async fn remote<P: Protocol>(
     };
 
     if publish_will {
-        let tenant_id = match cert_info {
+        let tenant_id = tenant_id.or_else(|| match cert_info {
             Some(cert_info) => cert_info.organization,
             None => None,
-        };
+        });
         let message = Event::PublishWill((client_id, tenant_id));
         // is this connection_id really correct at this point?
         // as we have disconnected already, some other connection

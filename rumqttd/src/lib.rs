@@ -50,7 +50,7 @@ pub type CommonName = String;
 pub type Organization = String;
 pub type Tenant = Option<String>;
 pub type AuthHandler = Arc<
-    dyn Fn(ClientId, AuthUser, AuthPass, CommonName, Organization) -> Pin<Box<dyn std::future::Future<Output = bool> + Send>>
+    dyn Fn(ClientId, AuthUser, AuthPass, CommonName, Organization) -> Pin<Box<dyn std::future::Future<Output = Result<Option<ClientInfo>, String>> + Send>>
         + Send
         + Sync,
 >;
@@ -132,7 +132,7 @@ impl ServerSettings {
     pub fn set_auth_handler<F, O>(&mut self, auth_fn: F)
     where
         F: Fn(ClientId, AuthUser, AuthPass, CommonName, Organization) -> O + Send + Sync + 'static,
-        O: IntoFuture<Output = bool> + 'static,
+        O: IntoFuture<Output = Result<Option<ClientInfo>, String>> + 'static,
         O::IntoFuture: Send,
     {
         self.connections.set_auth_handler(auth_fn)
@@ -168,7 +168,7 @@ impl ConnectionSettings {
     pub fn set_auth_handler<F, O>(&mut self, auth_fn: F)
     where
         F: Fn(ClientId, AuthUser, AuthPass, CommonName, Organization) -> O + Send + Sync + 'static,
-        O: IntoFuture<Output = bool> + 'static,
+        O: IntoFuture<Output = Result<Option<ClientInfo>, String>> + 'static,
         O::IntoFuture: Send,
     {
         self.external_auth = Some(Arc::new(move |client_id, username, password, cn, org| {

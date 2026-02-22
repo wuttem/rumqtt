@@ -175,7 +175,7 @@ pub async fn mqtt_connect<P>(
     config: Arc<ConnectionSettings>,
     network: &mut Network<P>,
     cert_info: &Option<CertInfo>,
-) -> Result<Packet, Error>
+) -> Result<(Packet, Option<crate::ClientInfo>), Error>
 where
     P: Protocol,
 {
@@ -197,7 +197,7 @@ where
     Span::current().record("client_id", &connect.client_id);
 
 
-    handle_auth(config.clone(), login.as_ref(), &connect.client_id, cert_info.as_ref()).await?;
+    let client_info = handle_auth(config.clone(), login.as_ref(), &connect.client_id, cert_info.as_ref()).await?;
 
     // When keep_alive feature is disabled client can live forever, which is not good in
     // distributed broker context so currenlty we don't allow it.
@@ -221,7 +221,7 @@ where
     }
 
     // Ok((connect, props, lastwill, lastwill_props))
-    Ok(packet)
+    Ok((packet, client_info))
 }
 
 async fn handle_auth(
@@ -229,9 +229,9 @@ async fn handle_auth(
     login: Option<&Login>,
     client_id: &str,
     certinfo: Option<&CertInfo>,
-) -> Result<(), Error> {
+) -> Result<Option<crate::ClientInfo>, Error> {
     if config.auth.is_none() && config.external_auth.is_none() {
-        return Ok(());
+        return Ok(None);
     }
 
     if client_id.starts_with("_broker") {
@@ -255,7 +255,7 @@ async fn handle_auth(
     };
 
     if let Some(auth) = &config.external_auth {
-        if !auth(
+        match auth(
             client_id.to_owned(),
             username.to_owned(),
             password.to_owned(),
@@ -264,16 +264,15 @@ async fn handle_auth(
         )
         .await
         {
-            return Err(Error::InvalidAuth);
+            Ok(client_info) => return Ok(client_info),
+            Err(_) => return Err(Error::InvalidAuth),
         }
-
-        return Ok(());
     }
 
     if let Some(pairs) = &config.auth {
         if let Some(stored_password) = pairs.get(username) {
             if stored_password.as_bytes().ct_eq(password.as_bytes()).into() {
-                return Ok(());
+                return Ok(None);
             }
         }
 
@@ -357,7 +356,7 @@ mod tests {
         let mut map = HashMap::<String, String>::new();
         map.insert("wrong".to_owned(), "wrong".to_owned());
 
-        let dynamic = |_: String, _: String, _: String, _: String, _: String| async { true };
+        let dynamic = |_: String, _: String, _: String, _: String, _: String| async { Ok(None) };
 
         let mut cfg = config();
         cfg.auth = Some(map);
@@ -374,7 +373,7 @@ mod tests {
         let mut map = HashMap::<String, String>::new();
         map.insert("wrong".to_owned(), "wrong".to_owned());
 
-        let dynamic = |_: String, _: String, _: String, _: String, _: String| async { false };
+        let dynamic = |_: String, _: String, _: String, _: String, _: String| async { Err("".to_string()) };
 
         let mut cfg = config();
         cfg.auth = Some(map);
@@ -386,9 +385,9 @@ mod tests {
 
     #[tokio::test]
     async fn external_auth_clousre_or_fnptr_type_check_or_fail_compile() {
-        let closure = |_: String, _: String, _: String, _: String, _: String| async { false };
-        async fn fnptr(_: String, _: String, _: String, _: String, _: String) -> bool {
-            true
+        let closure = |_: String, _: String, _: String, _: String, _: String| async { Err("".to_string()) };
+        async fn fnptr(_: String, _: String, _: String, _: String, _: String) -> Result<Option<crate::ClientInfo>, String> {
+            Ok(None)
         }
 
         let mut cfg = config();
