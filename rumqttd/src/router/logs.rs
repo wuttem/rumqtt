@@ -133,7 +133,7 @@ impl DataLog {
                 let v: Vec<usize> = self
                     .filter_indexes
                     .iter()
-                    .filter(|(filter, _)| matches(topic, filter))
+                    .filter(|(filter, _)| matches(topic, filter, self.config.allow_dollar_topics))
                     .map(|(_, filter_idx)| *filter_idx)
                     .collect();
 
@@ -162,7 +162,7 @@ impl DataLog {
 
                 // Match new filter to existing topics and add to publish_filters if it matches
                 for (topic, filters) in publish_filters.iter_mut() {
-                    if matches(topic, filter) {
+                    if matches(topic, filter, self.config.allow_dollar_topics) {
                         filters.push(idx);
                     }
                 }
@@ -305,7 +305,7 @@ impl DataLog {
         // no need to include timestamp when returning
         self.retained_publishes
             .iter()
-            .filter(|(topic, _)| matches(topic, filter))
+            .filter(|(topic, _)| matches(topic, filter, self.config.allow_dollar_topics))
             .map(|(_, p)| (p.publish.clone(), p.properties.clone(), p.client_id.clone()))
             .collect()
     }
@@ -329,7 +329,7 @@ where
         // Override segment config for selected filter
         if let Some(config) = &router_config.custom_segment {
             for (f, segment_config) in config {
-                if matches(filter, f) {
+                if matches(filter, f, router_config.allow_dollar_topics) {
                     info!("Overriding segment config for filter: {}", filter);
                     max_segment_size = segment_config.max_segment_size;
                     max_mem_segments = segment_config.max_segment_count;
@@ -451,6 +451,7 @@ mod test {
             custom_segment: None,
             initialized_filters: None,
             shared_subscriptions_strategy: Strategy::RoundRobin,
+            allow_dollar_topics: false,
         };
         let mut data = DataLog::new(config).unwrap();
         data.next_native_offset("topic/a");
@@ -471,6 +472,7 @@ mod test {
             custom_segment: None,
             initialized_filters: None,
             shared_subscriptions_strategy: Strategy::RoundRobin,
+            allow_dollar_topics: false,
         };
         let mut data = DataLog::new(config).unwrap();
         data.next_native_offset("+/+");

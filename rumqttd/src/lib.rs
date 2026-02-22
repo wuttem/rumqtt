@@ -212,6 +212,8 @@ pub struct RouterConfig {
     // defaults to Round Robin
     #[serde(default)]
     pub shared_subscriptions_strategy: Strategy,
+    #[serde(default)]
+    pub allow_dollar_topics: bool,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]

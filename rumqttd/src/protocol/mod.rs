@@ -661,8 +661,8 @@ pub fn valid_filter(filter: &str) -> bool {
 /// **NOTE**: 'topic' is a misnomer in the arg. this can also be used to match 2 wild subscriptions
 /// **NOTE**: make sure a topic is validated during a publish and filter is validated
 /// during a subscribe
-pub fn matches(topic: &str, filter: &str) -> bool {
-    if !topic.is_empty() && topic[..1].contains('$') {
+pub fn matches(topic: &str, filter: &str, allow_dollar_topics: bool) -> bool {
+    if !topic.is_empty() && topic[..1].contains('$') && !allow_dollar_topics {
         return false;
     }
 
