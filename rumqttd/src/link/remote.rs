@@ -245,13 +245,14 @@ async fn handle_auth(
     };
 
     // if we have certinfo, we can use it to authenticate
-    let (organization, common_name) = match certinfo {
+    let (organization, common_name, ca_path) = match certinfo {
         Some(certinfo) => {
             let org = certinfo.organization.to_owned().unwrap_or("".to_string());
             let cn = certinfo.common_name.to_owned();
-            (org, cn)
+            let ca = certinfo.ca_path.clone();
+            (org, cn, ca)
         }
-        None => ("".to_string(), "".to_string()),
+        None => ("".to_string(), "".to_string(), None),
     };
 
     if let Some(auth) = &config.external_auth {
@@ -261,6 +262,7 @@ async fn handle_auth(
             password.to_owned(),
             common_name.to_owned(),
             organization.to_owned(),
+            ca_path,
         )
         .await
         {
@@ -356,7 +358,7 @@ mod tests {
         let mut map = HashMap::<String, String>::new();
         map.insert("wrong".to_owned(), "wrong".to_owned());
 
-        let dynamic = |_: String, _: String, _: String, _: String, _: String| async { Ok(None) };
+        let dynamic = |_: String, _: String, _: String, _: String, _: String, _: Option<String>| async { Ok(None) };
 
         let mut cfg = config();
         cfg.auth = Some(map);
@@ -373,7 +375,7 @@ mod tests {
         let mut map = HashMap::<String, String>::new();
         map.insert("wrong".to_owned(), "wrong".to_owned());
 
-        let dynamic = |_: String, _: String, _: String, _: String, _: String| async { Err("".to_string()) };
+        let dynamic = |_: String, _: String, _: String, _: String, _: String, _: Option<String>| async { Err("".to_string()) };
 
         let mut cfg = config();
         cfg.auth = Some(map);
@@ -385,8 +387,8 @@ mod tests {
 
     #[tokio::test]
     async fn external_auth_clousre_or_fnptr_type_check_or_fail_compile() {
-        let closure = |_: String, _: String, _: String, _: String, _: String| async { Err("".to_string()) };
-        async fn fnptr(_: String, _: String, _: String, _: String, _: String) -> Result<Option<crate::ClientInfo>, String> {
+        let closure = |_: String, _: String, _: String, _: String, _: String, _: Option<String>| async { Err("".to_string()) };
+        async fn fnptr(_: String, _: String, _: String, _: String, _: String, _: Option<String>) -> Result<Option<crate::ClientInfo>, String> {
             Ok(None)
         }
 

@@ -41,6 +41,7 @@ struct AuthRequest {
     password: String,
     _common_name: String,
     _organization: String,
+    ca_path: Option<String>,
     reply_tx: tokio::sync::oneshot::Sender<Result<Option<ClientInfo>, String>>,
 }
 
@@ -79,7 +80,8 @@ fn main() {
               username: String,
               password: String,
               common_name: String,
-              organization: String| {
+              organization: String,
+              ca_path: Option<String>| {
             let tx: Sender<AuthRequest> = tx.clone();
             async move {
                 let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
@@ -89,6 +91,7 @@ fn main() {
                     password,
                     _common_name: common_name,
                     _organization: organization,
+                    ca_path,
                     reply_tx,
                 };
 

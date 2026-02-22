@@ -17,11 +17,12 @@ When thousands of clients connect simultaneously, directly querying a database p
 The `set_auth_handler` expects an async callback that resolves to `Result<Option<ClientInfo>, String>`. 
 ```rust
 server.set_auth_handler(
-    move |client_id: String, username: String, password: String, common_name: String, organization: String| {
+    move |client_id: String, username: String, password: String, common_name: String, organization: String, ca_path: Option<String>| {
         async move {
             // Your custom authentication logic goes here!
             // Return Ok(None) to proceed with standard rumqttd mapping,
             // or Ok(Some(ClientInfo)) to dynamically override client parameters.
+            // Check 'ca_path' to understand which Root CA authenticated the client!
         }
     }
 );

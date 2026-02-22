@@ -108,6 +108,7 @@ pub struct Login {
 pub struct CertInfo {
     pub common_name: String,
     pub organization: Option<String>,
+    pub ca_path: Option<String>,
 }
 
 //--------------------------- ConnectAck packet -------------------------------

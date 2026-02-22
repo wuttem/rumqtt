@@ -62,7 +62,7 @@ pub enum Error {
 
 #[cfg(feature = "verify-client-cert")]
 /// Extract uid from certificate's subject organization field
-fn extract_cert_info(der: &[u8]) -> Result<Option<CertInfo>, Error> {
+fn extract_cert_info(der: &[u8], ca_certs: Option<&[(String, Vec<u8>)]>) -> Result<Option<CertInfo>, Error> {
     use tracing::warn;
 
     use crate::protocol::CertInfo;
@@ -107,16 +107,33 @@ fn extract_cert_info(der: &[u8]) -> Result<Option<CertInfo>, Error> {
         return Ok(None)
     }
 
+    let mut ca_path_match = None;
+    if let Some(cas) = ca_certs {
+        for (path, ca_der) in cas {
+            if let Ok((_, ca_cert)) = x509_parser::parse_x509_certificate(ca_der) {
+                if cert.issuer() == ca_cert.subject() {
+                    ca_path_match = Some(path.clone());
+                    break;
+                }
+            }
+        }
+    }
+
     Ok(Some(CertInfo {
         organization,
         common_name: common_name.unwrap(),
+        ca_path: ca_path_match,
     }))
 }
 
 #[allow(dead_code)]
 pub enum TLSAcceptor {
     #[cfg(feature = "use-rustls")]
-    Rustls { acceptor: tokio_rustls::TlsAcceptor },
+    Rustls { 
+        acceptor: tokio_rustls::TlsAcceptor,
+        #[cfg(feature = "verify-client-cert")]
+        ca_certs: Option<Vec<(String, Vec<u8>)>>
+    },
     #[cfg(feature = "use-native-tls")]
     NativeTLS {
         acceptor: tokio_native_tls::TlsAcceptor,
@@ -147,7 +164,7 @@ impl TLSAcceptor {
     pub async fn accept(&self, stream: TcpStream) -> Result<(Option<CertInfo>, Box<dyn N>), Error> {
         match self {
             #[cfg(feature = "use-rustls")]
-            TLSAcceptor::Rustls { acceptor } => {
+            TLSAcceptor::Rustls { acceptor, #[cfg(feature = "verify-client-cert")] ca_certs } => {
                 let stream = acceptor.accept(stream).await?;
 
                 #[cfg(feature = "verify-client-cert")]
@@ -156,7 +173,7 @@ impl TLSAcceptor {
                     let peer_certificates = session
                         .peer_certificates()
                         .ok_or(Error::NoPeerCertificate)?;
-                    extract_cert_info(&peer_certificates[0])?
+                    extract_cert_info(&peer_certificates[0], ca_certs.as_deref())?
                 };
                 #[cfg(not(feature = "verify-client-cert"))]
                 let cert_info: Option<CertInfo> = None;
@@ -243,9 +260,12 @@ impl TLSAcceptor {
 
         // client authentication with a CA. CA isn't required otherwise
         #[cfg(feature = "verify-client-cert")]
+        let mut loaded_cas = Vec::new();
+        #[cfg(feature = "verify-client-cert")]
         let builder = {
             let mut store = RootCertStore::empty();
             let ca_path_obj = std::path::Path::new(ca_path);
+            let mut count = 0;
             
             if ca_path_obj.is_dir() {
                 // Read all files in the given directory
@@ -258,8 +278,13 @@ impl TLSAcceptor {
                         if let Ok(ca_file) = File::open(&path) {
                             let mut ca_file = BufReader::new(ca_file);
                             for cert in rustls_pemfile::certs(&mut ca_file) {
+                                if count >= 500 {
+                                    break;
+                                }
                                 if let Ok(ca_cert) = cert {
+                                    loaded_cas.push((path.display().to_string(), ca_cert.as_ref().to_vec()));
                                     store.add(ca_cert).ok();
+                                    count += 1;
                                 }
                             }
                         }
@@ -270,8 +295,13 @@ impl TLSAcceptor {
                 let ca_file = ca_file.map_err(|_| Error::CaFileNotFound(ca_path.clone()))?;
                 let mut ca_file = BufReader::new(ca_file);
                 for cert in rustls_pemfile::certs(&mut ca_file) {
+                    if count >= 500 {
+                        break;
+                    }
                     if let Ok(ca_cert) = cert {
+                        loaded_cas.push((ca_path.to_string(), ca_cert.as_ref().to_vec()));
                         store.add(ca_cert).ok();
+                        count += 1;
                     }
                 }
             }
@@ -295,7 +325,11 @@ impl TLSAcceptor {
         let server_config = builder.with_single_cert(certs, key)?;
 
         let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server_config));
-        Ok(TLSAcceptor::Rustls { acceptor })
+        Ok(TLSAcceptor::Rustls { 
+            acceptor,
+            #[cfg(feature = "verify-client-cert")]
+            ca_certs: Some(loaded_cas) 
+        })
     }
 }
 
