@@ -73,6 +73,18 @@ pub struct Config {
     pub bridge: Option<BridgeConfig>,
     pub prometheus: Option<PrometheusSetting>,
     pub metrics: Option<HashMap<MetricType, MetricSettings>>,
+    pub database: Option<DatabaseSettings>,
+    pub api: Option<ApiSettings>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DatabaseSettings {
+    pub url: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ApiSettings {
+    pub listen: SocketAddr,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

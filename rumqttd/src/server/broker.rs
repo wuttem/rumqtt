@@ -237,6 +237,32 @@ impl Broker {
         // so we collect handles for all of the spawned servers
         let mut server_thread_handles = Vec::new();
 
+        let db = if let Some(db_config) = &self.config.database {
+            let mut runtime = tokio::runtime::Builder::new_current_thread();
+            let runtime = runtime.enable_all().build().unwrap();
+            Some(runtime.block_on(async {
+                crate::server::db::Database::new(&db_config.url)
+                    .await
+                    .expect("Failed to initialize database")
+            }))
+        } else {
+            None
+        };
+
+        if let Some(api_config) = &self.config.api {
+            if let Some(db_clone) = db.clone() {
+                let api_thread = thread::Builder::new().name("API".to_string());
+                let addr = api_config.listen;
+                api_thread.spawn(move || {
+                    let mut runtime = tokio::runtime::Builder::new_current_thread();
+                    let runtime = runtime.enable_all().build().unwrap();
+                    runtime.block_on(crate::server::api::start(addr, db_clone));
+                })?;
+            } else {
+                warn!("API configured but Database is not configured");
+            }
+        }
+
         if let Some(metrics_config) = self.config.metrics.clone() {
             let timer_thread = thread::Builder::new().name("timer".to_owned());
             let router_tx = self.router_tx.clone();
@@ -268,7 +294,13 @@ impl Broker {
 
         // Spawn servers in a separate thread.
         if let Some(v4_config) = &self.config.v4 {
-            for (_, config) in v4_config.clone() {
+            for (_, mut config) in v4_config.clone() {
+                if let Some(db_clone) = db.clone() {
+                    config.set_auth_handler(move |_, username, password, _, _| {
+                        let db = db_clone.clone();
+                        async move { db.verify_user(&username, &password).await.unwrap_or(false) }
+                    });
+                }
                 let server_thread = thread::Builder::new().name(config.name.clone());
                 let mut server = Server::new(config, self.router_tx.clone(), V4);
                 let handle = server_thread.spawn(move || {
@@ -286,7 +318,13 @@ impl Broker {
         }
 
         if let Some(v5_config) = &self.config.v5 {
-            for (_, config) in v5_config.clone() {
+            for (_, mut config) in v5_config.clone() {
+                if let Some(db_clone) = db.clone() {
+                    config.set_auth_handler(move |_, username, password, _, _| {
+                        let db = db_clone.clone();
+                        async move { db.verify_user(&username, &password).await.unwrap_or(false) }
+                    });
+                }
                 let server_thread = thread::Builder::new().name(config.name.clone());
                 let mut server = Server::new(config, self.router_tx.clone(), V5);
                 let handle = server_thread.spawn(move || {
@@ -310,7 +348,13 @@ impl Broker {
 
         #[cfg(feature = "websocket")]
         if let Some(ws_config) = &self.config.ws {
-            for (_, config) in ws_config.clone() {
+            for (_, mut config) in ws_config.clone() {
+                if let Some(db_clone) = db.clone() {
+                    config.set_auth_handler(move |_, username, password, _, _| {
+                        let db = db_clone.clone();
+                        async move { db.verify_user(&username, &password).await.unwrap_or(false) }
+                    });
+                }
                 let server_thread = thread::Builder::new().name(config.name.clone());
                 //TODO: Add support for V5 procotol with websockets. Registered in config or on ServerSettings
                 let mut server = Server::new(config, self.router_tx.clone(), V4);
