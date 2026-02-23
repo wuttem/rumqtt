@@ -142,10 +142,14 @@ impl Broker {
         crate::server::BrokerController::new(self.router_tx.clone())
     }
 
-    pub fn admin_link(&self, client_id: &str) -> Result<crate::link::admin::AdminLink, local::LinkError> {
-        let (mut tx, rx) = self.link(client_id)?;
+    pub fn admin_link(&self, client_id: &str, channel_capacity: usize) -> Result<crate::link::admin::AdminLink, local::LinkError> {
+        let (link_tx, link_rx, _ack) =
+            LinkBuilder::new(client_id, self.router_tx.clone())
+                .channel_capacity(channel_capacity)
+                .build()?;
+        let mut tx = link_tx;
         tx.subscribe("#")?;
-        Ok(crate::link::admin::AdminLink::new(tx, rx))
+        Ok(crate::link::admin::AdminLink::new(tx, link_rx))
     }
 
     pub fn get_broker_links(&mut self) -> Result<BrokerLinks, local::LinkError> {

@@ -70,3 +70,8 @@ target[span{field=value}]=level
 ```
 So filter for logs of client with id "pub-001" which has occurred any any span will be `[{client_id=pub-001}]`. Know more about it [here](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/struct.EnvFilter.html#directives)
 
+## Rate Limits and Link Congestion
+
+`rumqttd` allows you to configure a per-client *rate limit* (messages/sec) dynamically during runtime. This limit functions as a "guaranteed rate" during periods of network link congestion. 
+
+When any outgoing link buffer reaches 80% capacity (which can be configured via `channel_capacity` on links), `rumqttd` detects congestion. It will then identify the client that is publishing the most messages *and* currently exceeding its configured rate limit, and automatically disconnect it. Clients that stay within their specified rate limit are protected from auto-disconnection during these congestion events, ensuring their traffic is guaranteed.

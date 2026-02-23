@@ -33,6 +33,10 @@ pub struct Connection {
     pub(crate) broker_topic_aliases: Option<BrokerAliases>,
     /// subscription IDs for a connection
     pub(crate) subscription_ids: HashMap<Filter, usize>,
+    /// Optional limit in msgs/sec for calculating whether this client is safe
+    pub rate_limit: Option<f32>,
+    /// Token bucket for rate limiting: (tokens, last_update_time)
+    pub tokens: (f32, std::time::Instant),
 }
 
 impl Connection {
@@ -68,6 +72,8 @@ impl Connection {
             topic_aliases: HashMap::new(),
             broker_topic_aliases: None,
             subscription_ids: HashMap::new(),
+            rate_limit: None,
+            tokens: (0.0, std::time::Instant::now()),
         }
     }
 

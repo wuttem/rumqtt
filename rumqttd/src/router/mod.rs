@@ -67,6 +67,8 @@ pub enum Event {
     GetClients(flume::Sender<Vec<ClientInfo>>),
     /// Force disconnect a client
     ForceDisconnect(String),
+    /// Set a rate limit (messages/sec) for a client
+    SetRateLimit(String, f32),
 }
 
 /// Notification from router to connection

@@ -288,6 +288,7 @@ impl Router {
             ),
             Event::GetClients(tx) => self.handle_get_clients(tx),
             Event::ForceDisconnect(client_id) => self.handle_force_disconnect(client_id),
+            Event::SetRateLimit(client_id, limit) => self.handle_set_rate_limit(client_id, limit),
         }
     }
 
@@ -301,12 +302,24 @@ impl Router {
                 ClientInfo {
                     client_id: c.client_id.clone(),
                     tenant,
+                    rate_limit: c.rate_limit,
                 }
             })
             .collect();
         
         if let Err(e) = tx.send(clients) {
              error!("Failed to return client list: {}", e);
+        }
+    }
+
+    fn handle_set_rate_limit(&mut self, client_id: String, limit: f32) {
+        if let Some(id) = self.connection_map.get(&client_id).copied() {
+            if let Some(connection) = self.connections.get_mut(id) {
+                connection.rate_limit = Some(limit);
+                info!("Set rate limit for {} to {} msgs/sec", client_id, limit);
+            }
+        } else {
+             error!("Can't set rate limit for {}, client not found", client_id);
         }
     }
 
@@ -607,6 +620,60 @@ impl Router {
         let mut new_data = false;
         let mut disconnect = false;
         let mut disconnect_reason: Option<DisconnectReasonCode> = None;
+
+        let publish_count = packets.iter().filter(|p| matches!(p, Packet::Publish(..))).count();
+        let mut rate_limit_exceeded = false;
+        
+        if publish_count > 0 {
+            if let Some(connection) = self.connections.get_mut(id) {
+                if let Some(rate_limit) = connection.rate_limit {
+                    let now = std::time::Instant::now();
+                    let elapsed = now.duration_since(connection.tokens.1).as_secs_f32();
+                    connection.tokens.0 += elapsed * rate_limit;
+                    if connection.tokens.0 > rate_limit * 2.0 {
+                        connection.tokens.0 = rate_limit * 2.0;
+                    }
+                    connection.tokens.1 = now;
+                    
+                    connection.tokens.0 -= publish_count as f32;
+                    if connection.tokens.0 < 0.0 {
+                        rate_limit_exceeded = true;
+                    }
+                }
+            }
+        }
+
+        if rate_limit_exceeded {
+            let congested = self.obufs.iter().any(|(_, obuf)| {
+                obuf.data_buffer.lock().len() >= (obuf.capacity * 4) / 5
+            });
+
+            if congested {
+                 let mut top_publisher = None;
+                 let mut max_publishes = 0;
+                 for (cid, conn) in self.connections.iter() {
+                     if conn.tokens.0 < 0.0 {
+                         if let Some(ibuf) = self.ibufs.get(cid) {
+                             if ibuf.meter.total_publishes.count >= max_publishes {
+                                 max_publishes = ibuf.meter.total_publishes.count;
+                                 top_publisher = Some(cid);
+                             }
+                         }
+                     }
+                 }
+                 
+                 if let Some(top_id) = top_publisher {
+                     warn!("Congestion detected! Disconnecting top exceeding publisher: {}", self.connections.get(top_id).unwrap().client_id);
+                     if top_id == id {
+                         disconnect = true;
+                         disconnect_reason = Some(DisconnectReasonCode::AdministrativeAction);
+                     } else {
+                         // schedule the other connection for disconnect
+                         self.handle_disconnection(top_id, Some(DisconnectReasonCode::AdministrativeAction));
+                     }
+                 }
+            }
+        }
 
 
 
@@ -1655,6 +1722,7 @@ fn forward_device_data(
             let client = ClientInfo {
                 client_id,
                 tenant: connection.tenant_prefix.clone(),
+                rate_limit: connection.rate_limit,
             };
 
             Forward {
@@ -1678,7 +1746,7 @@ fn forward_device_data(
         len
     );
 
-    if len >= MAX_CHANNEL_CAPACITY - 1 {
+    if len >= outgoing.capacity - 1 {
         debug!("Outgoing channel reached its capacity");
         outgoing.push_notification(Notification::Unschedule);
         outgoing.handle.try_send(()).ok();
@@ -1712,7 +1780,7 @@ fn retrieve_shadow(datalog: &mut DataLog, outgoing: &mut Outgoing, shadow: Shado
         // Fill notify shadow
         let message = Notification::Shadow(shadow_reply);
         let len = outgoing.push_notification(message);
-        if len >= MAX_CHANNEL_CAPACITY - 1 {
+        if len >= outgoing.capacity - 1 {
             outgoing.push_notification(Notification::Unschedule);
         }
         outgoing.handle.try_send(()).ok();

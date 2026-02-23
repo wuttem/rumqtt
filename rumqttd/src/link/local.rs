@@ -48,6 +48,8 @@ pub struct LinkBuilder<'a> {
     dynamic_filters: bool,
     // default to 0, indicating to not use topic alias
     topic_alias_max: u16,
+    // channel capacity for rx and tx buffers
+    channel_capacity: usize,
 }
 
 impl<'a> LinkBuilder<'a> {
@@ -61,6 +63,7 @@ impl<'a> LinkBuilder<'a> {
             last_will_properties: None,
             dynamic_filters: false,
             topic_alias_max: 0,
+            channel_capacity: crate::router::MAX_CHANNEL_CAPACITY,
         }
     }
 
@@ -97,6 +100,11 @@ impl<'a> LinkBuilder<'a> {
         self
     }
 
+    pub fn channel_capacity(mut self, channel_capacity: usize) -> Self {
+        self.channel_capacity = channel_capacity;
+        self
+    }
+
     pub fn build(self) -> Result<(LinkTx, LinkRx, Notification), LinkError> {
         // Connect to router
         // Local connections to the router shall have access to all subscriptions
@@ -110,8 +118,8 @@ impl<'a> LinkBuilder<'a> {
         connection
             .last_will(self.last_will, self.last_will_properties)
             .topic_alias_max(self.topic_alias_max);
-        let incoming = Incoming::new(connection.client_id.to_owned());
-        let (outgoing, link_rx) = Outgoing::new(connection.client_id.to_owned());
+        let incoming = Incoming::new(connection.client_id.to_owned(), self.channel_capacity);
+        let (outgoing, link_rx) = Outgoing::new(connection.client_id.to_owned(), self.channel_capacity);
         let outgoing_data_buffer = outgoing.buffer();
         let incoming_data_buffer = incoming.buffer();
 

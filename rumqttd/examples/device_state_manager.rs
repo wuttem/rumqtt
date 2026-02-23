@@ -45,7 +45,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // 2. Create the Admin Link (for monitoring and responding)
     // The "admin" client ID is privileged
-    let mut admin_link = broker.admin_link("admin")?;
+    let mut admin_link = broker.admin_link("admin", 200)?;
 
     // 3. Start the broker in a separate thread
     // Broker::start() is blocking and runs the network servers. We spawn it in a separate thread.

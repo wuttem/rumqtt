@@ -30,9 +30,9 @@ pub struct Incoming {
 
 impl Incoming {
     #[inline]
-    pub(crate) fn new(client_id: String) -> Self {
+    pub(crate) fn new(client_id: String, channel_capacity: usize) -> Self {
         Self {
-            buffer: Arc::new(Mutex::new(VecDeque::with_capacity(MAX_CHANNEL_CAPACITY))),
+            buffer: Arc::new(Mutex::new(VecDeque::with_capacity(channel_capacity))),
             meter: Default::default(),
             client_id,
         }
@@ -66,19 +66,21 @@ pub struct Outgoing {
     last_pkid: u16,
     /// Metrics of outgoing messages of this connection
     pub(crate) meter: OutgoingMeter,
+    /// Capacity of the buffer
+    pub(crate) capacity: usize,
 }
 
 impl Outgoing {
     #[inline]
-    pub(crate) fn new(client_id: String) -> (Self, Receiver<()>) {
-        let (handle, rx) = flume::bounded(MAX_CHANNEL_CAPACITY);
-        let data_buffer = VecDeque::with_capacity(MAX_CHANNEL_CAPACITY);
+    pub(crate) fn new(client_id: String, channel_capacity: usize) -> (Self, Receiver<()>) {
+        let (handle, rx) = flume::bounded(channel_capacity);
+        let data_buffer = VecDeque::with_capacity(channel_capacity);
         let inflight_buffer = VecDeque::with_capacity(MAX_INFLIGHT);
         let unacked_pubrels = VecDeque::with_capacity(MAX_INFLIGHT);
 
         // Ensure that there won't be any new allocations
         assert!(MAX_INFLIGHT <= inflight_buffer.capacity());
-        assert!(MAX_CHANNEL_CAPACITY <= data_buffer.capacity());
+        assert!(channel_capacity <= data_buffer.capacity());
 
         let outgoing = Self {
             client_id,
@@ -88,6 +90,7 @@ impl Outgoing {
             handle,
             last_pkid: 0,
             meter: Default::default(),
+            capacity: channel_capacity,
         };
 
         (outgoing, rx)
@@ -219,7 +222,7 @@ mod test {
 
     #[test]
     fn retransmission_map_is_calculated_accurately() {
-        let (mut outgoing, _) = Outgoing::new("retransmission-test".to_string());
+        let (mut outgoing, _) = Outgoing::new("retransmission-test".to_string(), 200);
         let mut result = HashMap::new();
 
         result.insert(0, (0, 8));
