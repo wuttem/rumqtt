@@ -35,14 +35,14 @@ fn test_congestion_auto_disconnect() {
         
         let controller = broker.controller();
 
-        // Add 100 msgs/sec lower rate limit for the safe client
-        controller.set_rate_limits(safe_id, Some(100.0), None).await.unwrap();
+        // Add a high 10,000 msgs/min lower rate limit for the safe client so it gets enough tokens over 100ms
+        controller.set_rate_limits(safe_id, Some(10000.0), None).await.unwrap();
 
         // 4. Connect a "spam" client 
         let spam_id = "spam_client";
         let (mut spam_tx, mut spam_rx) = broker.link(spam_id).unwrap();
 
-        // Add 5 msgs/sec lower rate limit for the spam client
+        // Add a tight 5 msgs/min lower rate limit for the spam client
         controller.set_rate_limits(spam_id, Some(5.0), None).await.unwrap();
 
         // Let the setup settle

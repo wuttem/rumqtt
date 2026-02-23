@@ -319,7 +319,7 @@ impl Router {
             if let Some(connection) = self.connections.get_mut(id) {
                 connection.lower_rate = lower;
                 connection.higher_rate = higher;
-                info!("Set rate limits for {}: lower = {:?}, higher = {:?}", client_id, lower, higher);
+                info!("Set rate limits for {}: lower = {:?}, higher = {:?} msgs/min", client_id, lower, higher);
             }
         } else {
              error!("Can't set rate limits for {}, client not found", client_id);
@@ -635,9 +635,9 @@ impl Router {
         }
 
         if let Some(connection) = self.connections.get_mut(id) {
-            // 1. Maintain the history of message rates (1-second buckets)
-            // Shift buckets if more than 1 second has passed
-            let elapsed_buckets = now.duration_since(connection.bucket_start).as_secs();
+            // 1. Maintain the history of message rates (1-minute buckets)
+            // Shift buckets if more than 1 minute has passed
+            let elapsed_buckets = now.duration_since(connection.bucket_start).as_secs() / 60;
             if elapsed_buckets > 0 {
                 let shift = std::cmp::min(elapsed_buckets as usize, 6);
                 for _ in 0..shift {
@@ -655,7 +655,7 @@ impl Router {
             // 2. Enforce token-bucket based rate limits (if configured)
             // Lower rate limiting
             if let Some(lower_rate) = connection.lower_rate {
-                let elapsed_time = now.duration_since(connection.lower_tokens.1).as_secs_f32();
+                let elapsed_time = now.duration_since(connection.lower_tokens.1).as_secs_f32() / 60.0;
                 connection.lower_tokens.0 += elapsed_time * lower_rate;
                 
                 if connection.lower_tokens.0 > lower_rate * 2.0 {
@@ -671,7 +671,7 @@ impl Router {
 
             // Higher rate limiting
             if let Some(higher_rate) = connection.higher_rate {
-                let elapsed_time = now.duration_since(connection.higher_tokens.1).as_secs_f32();
+                let elapsed_time = now.duration_since(connection.higher_tokens.1).as_secs_f32() / 60.0;
                 connection.higher_tokens.0 += elapsed_time * higher_rate;
                 
                 if connection.higher_tokens.0 > higher_rate * 2.0 {

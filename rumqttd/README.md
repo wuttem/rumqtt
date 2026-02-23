@@ -72,7 +72,7 @@ So filter for logs of client with id "pub-001" which has occurred any any span w
 
 ## Rate Limits and Link Congestion
 
-`rumqttd` allows you to configure a dual-bound per-client *rate limit* (messages/sec) dynamically during runtime or via defaults in `rumqttd.toml`. This limit allows you to assign specific bandwidth limits and protect the broker from congestion.
+`rumqttd` allows you to configure a dual-bound per-client *rate limit* (messages/min) dynamically during runtime or via defaults in `rumqttd.toml`. This limit allows you to assign specific bandwidth limits and protect the broker from congestion.
 
 There are two bounds you can configure for a client:
 * **Lower Rate (`lower_rate` limits):** If a client exceeds this rate, they are placed on "probation". It will not automatically drop them. However, if the **admin link** buffer reaches a pre-configured saturation threshold (e.g., 80% capacity), `rumqttd` detects congestion. It will identify the client on probation that is publishing the most messages and automatically disconnect it. Clients that stay within their `lower_rate` are protected from auto-disconnection during these congestion events, ensuring their traffic is guaranteed.
@@ -118,4 +118,4 @@ With the controller, you can:
   // set_rate_limits("client_id", lower_rate, higher_rate)
   controller.set_rate_limits("client_id", Some(10.0), Some(100.0)).await?
   ```
-* **Read Client Information and Metrics:** `controller.get_clients().await?` returns a list of all active `ClientInfo`. Under the new rate limiting model, `ClientInfo` exposes `.message_rates`, which contains a `Vec<u32>` of up to 6 metrics—each entry capturing the exact number of messages the client transmitted in recent 1-second buckets. Index `0` is the currently accumulating second, and Indices `1-5` capture the previous 5 seconds of message history. You can iterate over this array to calculate rolling averages or monitor live client rates dynamically.
+* **Read Client Information and Metrics:** `controller.get_clients().await?` returns a list of all active `ClientInfo`. Under the new rate limiting model, `ClientInfo` exposes `.message_rates`, which contains a `Vec<u32>` of up to 6 metrics—each entry capturing the exact number of messages the client transmitted in recent 1-minute buckets. Index `0` is the currently accumulating minute, and Indices `1-5` capture the previous 5 minutes of message history. You can iterate over this array to calculate rolling averages or monitor live client rates dynamically.
