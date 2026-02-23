@@ -27,8 +27,8 @@ impl BrokerController {
         Ok(())
     }
 
-    pub async fn set_rate_limit(&self, client_id: &str, limit: f32) -> Result<(), Error> {
-        let event = Event::SetRateLimit(client_id.to_owned(), limit);
+    pub async fn set_rate_limits(&self, client_id: &str, lower: Option<f32>, higher: Option<f32>) -> Result<(), Error> {
+        let event = Event::SetRateLimit(client_id.to_owned(), lower, higher);
         self.router_tx.send_async((0, event)).await.map_err(Error::Send)?;
         Ok(())
     }

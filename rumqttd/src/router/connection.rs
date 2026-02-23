@@ -34,9 +34,13 @@ pub struct Connection {
     /// subscription IDs for a connection
     pub(crate) subscription_ids: HashMap<Filter, usize>,
     /// Optional limit in msgs/sec for calculating whether this client is safe
-    pub rate_limit: Option<f32>,
-    /// Token bucket for rate limiting: (tokens, last_update_time)
-    pub tokens: (f32, std::time::Instant),
+    pub lower_rate: Option<f32>,
+    /// Token bucket for lower rate limiting: (tokens, last_update_time)
+    pub lower_tokens: (f32, std::time::Instant),
+    /// Optional limit in msgs/sec for calculating whether this client must be forcefully disconnected
+    pub higher_rate: Option<f32>,
+    /// Token bucket for higher rate limiting: (tokens, last_update_time)
+    pub higher_tokens: (f32, std::time::Instant),
     /// Message rates broken down by last 6 seconds (current + 5 history buckets). Index 0 is the newest.
     pub message_rates: std::collections::VecDeque<u32>,
     /// The timestamp tracking start of the current bucket.
@@ -76,8 +80,10 @@ impl Connection {
             topic_aliases: HashMap::new(),
             broker_topic_aliases: None,
             subscription_ids: HashMap::new(),
-            rate_limit: None,
-            tokens: (0.0, std::time::Instant::now()),
+            lower_rate: None,
+            lower_tokens: (0.0, std::time::Instant::now()),
+            higher_rate: None,
+            higher_tokens: (0.0, std::time::Instant::now()),
             message_rates: std::collections::VecDeque::from(vec![0; 6]),
             bucket_start: std::time::Instant::now(),
         }

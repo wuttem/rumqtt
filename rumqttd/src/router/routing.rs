@@ -288,7 +288,7 @@ impl Router {
             ),
             Event::GetClients(tx) => self.handle_get_clients(tx),
             Event::ForceDisconnect(client_id) => self.handle_force_disconnect(client_id),
-            Event::SetRateLimit(client_id, limit) => self.handle_set_rate_limit(client_id, limit),
+            Event::SetRateLimit(client_id, lower, higher) => self.handle_set_rate_limit(client_id, lower, higher),
         }
     }
 
@@ -302,7 +302,8 @@ impl Router {
                 ClientInfo {
                     client_id: c.client_id.clone(),
                     tenant,
-                    rate_limit: c.rate_limit,
+                    lower_rate: c.lower_rate,
+                    higher_rate: c.higher_rate,
                     message_rates: c.message_rates.clone().into(),
                 }
             })
@@ -313,14 +314,15 @@ impl Router {
         }
     }
 
-    fn handle_set_rate_limit(&mut self, client_id: String, limit: f32) {
+    fn handle_set_rate_limit(&mut self, client_id: String, lower: Option<f32>, higher: Option<f32>) {
         if let Some(id) = self.connection_map.get(&client_id).copied() {
             if let Some(connection) = self.connections.get_mut(id) {
-                connection.rate_limit = Some(limit);
-                info!("Set rate limit for {} to {} msgs/sec", client_id, limit);
+                connection.lower_rate = lower;
+                connection.higher_rate = higher;
+                info!("Set rate limits for {}: lower = {:?}, higher = {:?}", client_id, lower, higher);
             }
         } else {
-             error!("Can't set rate limit for {}, client not found", client_id);
+             error!("Can't set rate limits for {}, client not found", client_id);
         }
     }
 
@@ -420,6 +422,13 @@ impl Router {
                 client_id.clone(),
                 (will, connection.last_will_properties.take()),
             );
+        }
+
+        if connection.lower_rate.is_none() {
+            connection.lower_rate = self.config.default_lower_rate;
+        }
+        if connection.higher_rate.is_none() {
+            connection.higher_rate = self.config.default_higher_rate;
         }
 
         let full_client_id = connection.client_id.to_owned();
@@ -611,7 +620,19 @@ impl Router {
         disconnect_reason: &mut Option<DisconnectReasonCode>,
     ) {
         let now = std::time::Instant::now();
-        let mut rate_limit_exceeded = false;
+        let mut lower_rate_exceeded = false;
+        let mut higher_rate_exceeded = false;
+
+        if publish_count == 0 {
+            return;
+        }
+
+        if let Some(obuf) = self.obufs.get(id) {
+            // NEVER rate limit admin links. They do not count towards device quotas.
+            if obuf.is_admin {
+                return;
+            }
+        }
 
         if let Some(connection) = self.connections.get_mut(id) {
             // 1. Maintain the history of message rates (1-second buckets)
@@ -627,40 +648,59 @@ impl Router {
             }
             
             // Add the new publishes to the current bucket
-            if publish_count > 0 {
-                if let Some(front) = connection.message_rates.front_mut() {
-                    *front += publish_count as u32;
-                }
+            if let Some(front) = connection.message_rates.front_mut() {
+                *front += publish_count as u32;
             }
 
             // 2. Enforce token-bucket based rate limits (if configured)
-            if publish_count > 0 {
-                if let Some(rate_limit) = connection.rate_limit {
-                    let elapsed_time = now.duration_since(connection.tokens.1).as_secs_f32();
-                    // Add new tokens based on elapsed time
-                    connection.tokens.0 += elapsed_time * rate_limit;
-                    
-                    // Cap tokens at 2x the limit to prevent huge bursts after long inactivity
-                    if connection.tokens.0 > rate_limit * 2.0 {
-                        connection.tokens.0 = rate_limit * 2.0;
-                    }
-                    connection.tokens.1 = now;
-                    
-                    // Consume tokens for current publishes
-                    connection.tokens.0 -= publish_count as f32;
-                    
-                    if connection.tokens.0 < 0.0 {
-                        rate_limit_exceeded = true;
-                    }
+            // Lower rate limiting
+            if let Some(lower_rate) = connection.lower_rate {
+                let elapsed_time = now.duration_since(connection.lower_tokens.1).as_secs_f32();
+                connection.lower_tokens.0 += elapsed_time * lower_rate;
+                
+                if connection.lower_tokens.0 > lower_rate * 2.0 {
+                    connection.lower_tokens.0 = lower_rate * 2.0;
+                }
+                connection.lower_tokens.1 = now;
+                
+                connection.lower_tokens.0 -= publish_count as f32;
+                if connection.lower_tokens.0 < 0.0 {
+                    lower_rate_exceeded = true;
+                }
+            }
+
+            // Higher rate limiting
+            if let Some(higher_rate) = connection.higher_rate {
+                let elapsed_time = now.duration_since(connection.higher_tokens.1).as_secs_f32();
+                connection.higher_tokens.0 += elapsed_time * higher_rate;
+                
+                if connection.higher_tokens.0 > higher_rate * 2.0 {
+                    connection.higher_tokens.0 = higher_rate * 2.0;
+                }
+                connection.higher_tokens.1 = now;
+                
+                connection.higher_tokens.0 -= publish_count as f32;
+                if connection.higher_tokens.0 < 0.0 {
+                    higher_rate_exceeded = true;
                 }
             }
         }
 
-        // 3. Congestion Auto-Disconnect feature
-        if rate_limit_exceeded {
-            // Check if any admin outgoing buffer is >= 80% saturated
+        // 3. Admin congestion & hard limit checking
+        // If the client exceeds the higher limit, disconnect them unconditionally
+        if higher_rate_exceeded {
+             warn!("Client exceeding higher rate limit. Disconnecting: {}", self.connections.get(id).unwrap().client_id);
+             *disconnect = true;
+             *disconnect_reason = Some(DisconnectReasonCode::AdministrativeAction);
+             return;
+        }
+
+        // If the client exceeds the lower limit, they are susceptible to congestion auto-disconnect
+        if lower_rate_exceeded {
+            let threshold = self.config.congestion_threshold;
+            // Check if any admin outgoing buffer is >= congestion threshold saturated
             let congested = self.obufs.iter().any(|(_, obuf)| {
-                obuf.is_admin && obuf.data_buffer.lock().len() >= (obuf.capacity * 4) / 5
+                obuf.is_admin && (obuf.data_buffer.lock().len() as f32 / obuf.capacity as f32) >= threshold
             });
 
             if congested {
@@ -669,7 +709,7 @@ impl Router {
                  
                  // Scan all clients out of tokens to find the worst offender by total publishes
                  for (cid, conn) in self.connections.iter() {
-                     if conn.tokens.0 < 0.0 {
+                     if conn.lower_tokens.0 < 0.0 {
                          if let Some(ibuf) = self.ibufs.get(cid) {
                              if ibuf.meter.total_publishes.count >= max_publishes {
                                  max_publishes = ibuf.meter.total_publishes.count;
@@ -1763,7 +1803,8 @@ fn forward_device_data(
             let client = ClientInfo {
                 client_id,
                 tenant: connection.tenant_prefix.clone(),
-                rate_limit: connection.rate_limit,
+                lower_rate: connection.lower_rate,
+                higher_rate: connection.higher_rate,
                 message_rates: connection.message_rates.clone().into(),
             };
 

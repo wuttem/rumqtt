@@ -23,7 +23,8 @@ impl AuthActor {
                 Ok(Some(ClientInfo {
                     client_id: format!("{}_override", req.client_id),
                     tenant: Some("custom_tenant".to_string()),
-                    rate_limit: None,
+                    lower_rate: None,
+                    higher_rate: None,
                     message_rates: vec![],
                 }))
             } else {

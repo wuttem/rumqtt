@@ -59,7 +59,8 @@ pub type AuthHandler = Arc<
 pub struct ClientInfo {
     pub client_id: ClientId,
     pub tenant: Tenant,
-    pub rate_limit: Option<f32>,
+    pub lower_rate: Option<f32>,
+    pub higher_rate: Option<f32>,
     pub message_rates: Vec<u32>,
 }
 
@@ -216,6 +217,14 @@ pub struct RouterConfig {
     pub shared_subscriptions_strategy: Strategy,
     #[serde(default)]
     pub allow_dollar_topics: bool,
+    #[serde(default = "default_congestion_threshold")]
+    pub congestion_threshold: f32,
+    pub default_lower_rate: Option<f32>,
+    pub default_higher_rate: Option<f32>,
+}
+
+fn default_congestion_threshold() -> f32 {
+    0.8
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]

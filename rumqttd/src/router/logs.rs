@@ -452,6 +452,7 @@ mod test {
             initialized_filters: None,
             shared_subscriptions_strategy: Strategy::RoundRobin,
             allow_dollar_topics: false,
+            ..Default::default()
         };
         let mut data = DataLog::new(config).unwrap();
         data.next_native_offset("topic/a");
@@ -473,6 +474,7 @@ mod test {
             initialized_filters: None,
             shared_subscriptions_strategy: Strategy::RoundRobin,
             allow_dollar_topics: false,
+            ..Default::default()
         };
         let mut data = DataLog::new(config).unwrap();
         data.next_native_offset("+/+");
