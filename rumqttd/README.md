@@ -74,4 +74,34 @@ So filter for logs of client with id "pub-001" which has occurred any any span w
 
 `rumqttd` allows you to configure a per-client *rate limit* (messages/sec) dynamically during runtime. This limit functions as a "guaranteed rate" during periods of network link congestion. 
 
-When any outgoing link buffer reaches 80% capacity (which can be configured via `channel_capacity` on links), `rumqttd` detects congestion. It will then identify the client that is publishing the most messages *and* currently exceeding its configured rate limit, and automatically disconnect it. Clients that stay within their specified rate limit are protected from auto-disconnection during these congestion events, ensuring their traffic is guaranteed.
+When any **admin link** buffer reaches 80% capacity (which can be configured via `channel_capacity` on links), `rumqttd` detects congestion. It will then identify the client that is publishing the most messages *and* currently exceeding its configured rate limit, and automatically disconnect it. Clients that stay within their specified rate limit are protected from auto-disconnection during these congestion events, ensuring their traffic is guaranteed. This congestion feature is only tracked and enforced on traffic destined for the `AdminLink`.
+
+## Admin Link & Broker Controller
+
+The **Admin Link** and **Broker Controller** provide programmatic interfaces to monitor and manage a running broker.
+
+### Admin Link
+The `AdminLink` is a privilege communication channel that allows you to tap into the message stream and observe data natively processed by the router without connecting via the external MQTT network. 
+
+To create one, you typically configure it with a desired `channel_capacity`:
+```rust
+let mut admin_link = broker.admin_link("admin_client_id", 200)?;
+```
+`admin_link.recv().await` will receive all messages conforming to the subscriptions you make (`admin_link.subscribe("#")`).
+
+*Note:* Because the Admin Link is marked internally as an administrative channel, its buffer capacity is monitored for congestion. If it fills up (e.g., due to downstream IoT sync processes running slower than message ingress), the rate-limiting disconnection algorithms will kick in to protect it. Regular remote links do not trigger the congestion auto-disconnect feature when saturated; they will just assert backpressure by dropping new data until space is available.
+
+### Broker Controller
+The `BrokerController` exposes APIs to actively manage the state of the broker and connected clients.
+
+```rust
+let controller = broker.controller();
+```
+
+With the controller, you can:
+* **Disconnect clients:** `controller.disconnect_client("client_id").await?`
+* **Set Rate Limits:** Secure connection traffic by guaranteeing rate limits for specific clients:
+  ```rust
+  controller.set_rate_limit("client_id", 10.0 /* messages / sec */).await?
+  ```
+* **Read Client Information and Metrics:** `controller.get_clients().await?` returns a list of all active `ClientInfo`. Under the new rate limiting model, `ClientInfo` exposes `.message_rates`, which contains a `Vec<u32>` of up to 6 metrics—each entry capturing the exact number of messages the client transmitted in recent 1-second buckets. Index `0` is the currently accumulating second, and Indices `1-5` capture the previous 5 seconds of message history.
