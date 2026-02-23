@@ -60,6 +60,7 @@ pub struct ClientInfo {
     pub client_id: ClientId,
     pub tenant: Tenant,
     pub rate_limit: Option<f32>,
+    pub message_rates: Vec<u32>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]

@@ -303,6 +303,7 @@ impl Router {
                     client_id: c.client_id.clone(),
                     tenant,
                     rate_limit: c.rate_limit,
+                    message_rates: c.message_rates.clone().into(),
                 }
             })
             .collect();
@@ -600,6 +601,99 @@ impl Router {
         self.router_meters.total_connections -= 1;
     }
 
+    /// Tracks message rate history across buckets and enforces client-specific rate limits.
+    /// Protects the router from outgoing link congestion by auto-disconnecting bad actors.
+    fn track_and_enforce_rate_limits(
+        &mut self,
+        id: ConnectionId,
+        publish_count: usize,
+        disconnect: &mut bool,
+        disconnect_reason: &mut Option<DisconnectReasonCode>,
+    ) {
+        let now = std::time::Instant::now();
+        let mut rate_limit_exceeded = false;
+
+        if let Some(connection) = self.connections.get_mut(id) {
+            // 1. Maintain the history of message rates (1-second buckets)
+            // Shift buckets if more than 1 second has passed
+            let elapsed_buckets = now.duration_since(connection.bucket_start).as_secs();
+            if elapsed_buckets > 0 {
+                let shift = std::cmp::min(elapsed_buckets as usize, 6);
+                for _ in 0..shift {
+                    connection.message_rates.push_front(0);
+                    connection.message_rates.pop_back();
+                }
+                connection.bucket_start = now;
+            }
+            
+            // Add the new publishes to the current bucket
+            if publish_count > 0 {
+                if let Some(front) = connection.message_rates.front_mut() {
+                    *front += publish_count as u32;
+                }
+            }
+
+            // 2. Enforce token-bucket based rate limits (if configured)
+            if publish_count > 0 {
+                if let Some(rate_limit) = connection.rate_limit {
+                    let elapsed_time = now.duration_since(connection.tokens.1).as_secs_f32();
+                    // Add new tokens based on elapsed time
+                    connection.tokens.0 += elapsed_time * rate_limit;
+                    
+                    // Cap tokens at 2x the limit to prevent huge bursts after long inactivity
+                    if connection.tokens.0 > rate_limit * 2.0 {
+                        connection.tokens.0 = rate_limit * 2.0;
+                    }
+                    connection.tokens.1 = now;
+                    
+                    // Consume tokens for current publishes
+                    connection.tokens.0 -= publish_count as f32;
+                    
+                    if connection.tokens.0 < 0.0 {
+                        rate_limit_exceeded = true;
+                    }
+                }
+            }
+        }
+
+        // 3. Congestion Auto-Disconnect feature
+        if rate_limit_exceeded {
+            // Check if any outgoing buffer is >= 80% saturated
+            let congested = self.obufs.iter().any(|(_, obuf)| {
+                obuf.data_buffer.lock().len() >= (obuf.capacity * 4) / 5
+            });
+
+            if congested {
+                 let mut top_publisher = None;
+                 let mut max_publishes = 0;
+                 
+                 // Scan all clients out of tokens to find the worst offender by total publishes
+                 for (cid, conn) in self.connections.iter() {
+                     if conn.tokens.0 < 0.0 {
+                         if let Some(ibuf) = self.ibufs.get(cid) {
+                             if ibuf.meter.total_publishes.count >= max_publishes {
+                                 max_publishes = ibuf.meter.total_publishes.count;
+                                 top_publisher = Some(cid);
+                             }
+                         }
+                     }
+                 }
+                 
+                 // Perform the actual disconnect for the worst offender
+                 if let Some(top_id) = top_publisher {
+                     warn!("Congestion detected! Disconnecting top exceeding publisher: {}", self.connections.get(top_id).unwrap().client_id);
+                     if top_id == id {
+                         *disconnect = true;
+                         *disconnect_reason = Some(DisconnectReasonCode::AdministrativeAction);
+                     } else {
+                         // schedule the other connection for disconnect
+                         self.handle_disconnection(top_id, Some(DisconnectReasonCode::AdministrativeAction));
+                     }
+                 }
+            }
+        }
+    }
+
     fn handle_device_payload(&mut self, id: ConnectionId) {
         let incoming = match self.ibufs.get_mut(id) {
             Some(v) => v,
@@ -622,60 +716,7 @@ impl Router {
         let mut disconnect_reason: Option<DisconnectReasonCode> = None;
 
         let publish_count = packets.iter().filter(|p| matches!(p, Packet::Publish(..))).count();
-        let mut rate_limit_exceeded = false;
-        
-        if publish_count > 0 {
-            if let Some(connection) = self.connections.get_mut(id) {
-                if let Some(rate_limit) = connection.rate_limit {
-                    let now = std::time::Instant::now();
-                    let elapsed = now.duration_since(connection.tokens.1).as_secs_f32();
-                    connection.tokens.0 += elapsed * rate_limit;
-                    if connection.tokens.0 > rate_limit * 2.0 {
-                        connection.tokens.0 = rate_limit * 2.0;
-                    }
-                    connection.tokens.1 = now;
-                    
-                    connection.tokens.0 -= publish_count as f32;
-                    if connection.tokens.0 < 0.0 {
-                        rate_limit_exceeded = true;
-                    }
-                }
-            }
-        }
-
-        if rate_limit_exceeded {
-            let congested = self.obufs.iter().any(|(_, obuf)| {
-                obuf.data_buffer.lock().len() >= (obuf.capacity * 4) / 5
-            });
-
-            if congested {
-                 let mut top_publisher = None;
-                 let mut max_publishes = 0;
-                 for (cid, conn) in self.connections.iter() {
-                     if conn.tokens.0 < 0.0 {
-                         if let Some(ibuf) = self.ibufs.get(cid) {
-                             if ibuf.meter.total_publishes.count >= max_publishes {
-                                 max_publishes = ibuf.meter.total_publishes.count;
-                                 top_publisher = Some(cid);
-                             }
-                         }
-                     }
-                 }
-                 
-                 if let Some(top_id) = top_publisher {
-                     warn!("Congestion detected! Disconnecting top exceeding publisher: {}", self.connections.get(top_id).unwrap().client_id);
-                     if top_id == id {
-                         disconnect = true;
-                         disconnect_reason = Some(DisconnectReasonCode::AdministrativeAction);
-                     } else {
-                         // schedule the other connection for disconnect
-                         self.handle_disconnection(top_id, Some(DisconnectReasonCode::AdministrativeAction));
-                     }
-                 }
-            }
-        }
-
-
+        self.track_and_enforce_rate_limits(id, publish_count, &mut disconnect, &mut disconnect_reason);
 
         for packet in packets.drain(0..) {
             match packet {
@@ -1723,6 +1764,7 @@ fn forward_device_data(
                 client_id,
                 tenant: connection.tenant_prefix.clone(),
                 rate_limit: connection.rate_limit,
+                message_rates: connection.message_rates.clone().into(),
             };
 
             Forward {

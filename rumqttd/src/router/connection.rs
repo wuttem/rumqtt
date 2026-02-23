@@ -37,6 +37,10 @@ pub struct Connection {
     pub rate_limit: Option<f32>,
     /// Token bucket for rate limiting: (tokens, last_update_time)
     pub tokens: (f32, std::time::Instant),
+    /// Message rates broken down by last 6 seconds (current + 5 history buckets). Index 0 is the newest.
+    pub message_rates: std::collections::VecDeque<u32>,
+    /// The timestamp tracking start of the current bucket.
+    pub bucket_start: std::time::Instant,
 }
 
 impl Connection {
@@ -74,6 +78,8 @@ impl Connection {
             subscription_ids: HashMap::new(),
             rate_limit: None,
             tokens: (0.0, std::time::Instant::now()),
+            message_rates: std::collections::VecDeque::from(vec![0; 6]),
+            bucket_start: std::time::Instant::now(),
         }
     }
 

@@ -24,6 +24,7 @@ impl AuthActor {
                     client_id: format!("{}_override", req.client_id),
                     tenant: Some("custom_tenant".to_string()),
                     rate_limit: None,
+                    message_rates: vec![],
                 }))
             } else {
                 Err("Invalid credentials".to_string())
