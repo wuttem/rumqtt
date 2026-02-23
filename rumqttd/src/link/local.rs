@@ -50,6 +50,8 @@ pub struct LinkBuilder<'a> {
     topic_alias_max: u16,
     // channel capacity for rx and tx buffers
     channel_capacity: usize,
+    // true if this link is an admin link, enabling features like auto-disconnect on congestion
+    is_admin: bool,
 }
 
 impl<'a> LinkBuilder<'a> {
@@ -64,6 +66,7 @@ impl<'a> LinkBuilder<'a> {
             dynamic_filters: false,
             topic_alias_max: 0,
             channel_capacity: crate::router::MAX_CHANNEL_CAPACITY,
+            is_admin: false,
         }
     }
 
@@ -105,6 +108,11 @@ impl<'a> LinkBuilder<'a> {
         self
     }
 
+    pub fn admin(mut self) -> Self {
+        self.is_admin = true;
+        self
+    }
+
     pub fn build(self) -> Result<(LinkTx, LinkRx, Notification), LinkError> {
         // Connect to router
         // Local connections to the router shall have access to all subscriptions
@@ -119,7 +127,7 @@ impl<'a> LinkBuilder<'a> {
             .last_will(self.last_will, self.last_will_properties)
             .topic_alias_max(self.topic_alias_max);
         let incoming = Incoming::new(connection.client_id.to_owned(), self.channel_capacity);
-        let (outgoing, link_rx) = Outgoing::new(connection.client_id.to_owned(), self.channel_capacity);
+        let (outgoing, link_rx) = Outgoing::new(connection.client_id.to_owned(), self.channel_capacity, self.is_admin);
         let outgoing_data_buffer = outgoing.buffer();
         let incoming_data_buffer = incoming.buffer();
 

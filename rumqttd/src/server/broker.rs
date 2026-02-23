@@ -146,6 +146,7 @@ impl Broker {
         let (link_tx, link_rx, _ack) =
             LinkBuilder::new(client_id, self.router_tx.clone())
                 .channel_capacity(channel_capacity)
+                .admin()
                 .build()?;
         let mut tx = link_tx;
         tx.subscribe("#")?;

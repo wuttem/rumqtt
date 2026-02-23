@@ -68,11 +68,13 @@ pub struct Outgoing {
     pub(crate) meter: OutgoingMeter,
     /// Capacity of the buffer
     pub(crate) capacity: usize,
+    /// Indicates if this is an admin link, used to selectively trigger congestion logic.
+    pub is_admin: bool,
 }
 
 impl Outgoing {
     #[inline]
-    pub(crate) fn new(client_id: String, channel_capacity: usize) -> (Self, Receiver<()>) {
+    pub(crate) fn new(client_id: String, channel_capacity: usize, is_admin: bool) -> (Self, Receiver<()>) {
         let (handle, rx) = flume::bounded(channel_capacity);
         let data_buffer = VecDeque::with_capacity(channel_capacity);
         let inflight_buffer = VecDeque::with_capacity(MAX_INFLIGHT);
@@ -91,6 +93,7 @@ impl Outgoing {
             last_pkid: 0,
             meter: Default::default(),
             capacity: channel_capacity,
+            is_admin,
         };
 
         (outgoing, rx)
@@ -222,7 +225,7 @@ mod test {
 
     #[test]
     fn retransmission_map_is_calculated_accurately() {
-        let (mut outgoing, _) = Outgoing::new("retransmission-test".to_string(), 200);
+        let (mut outgoing, _) = Outgoing::new("retransmission-test".to_string(), 200, false);
         let mut result = HashMap::new();
 
         result.insert(0, (0, 8));

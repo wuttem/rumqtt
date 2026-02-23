@@ -658,9 +658,9 @@ impl Router {
 
         // 3. Congestion Auto-Disconnect feature
         if rate_limit_exceeded {
-            // Check if any outgoing buffer is >= 80% saturated
+            // Check if any admin outgoing buffer is >= 80% saturated
             let congested = self.obufs.iter().any(|(_, obuf)| {
-                obuf.data_buffer.lock().len() >= (obuf.capacity * 4) / 5
+                obuf.is_admin && obuf.data_buffer.lock().len() >= (obuf.capacity * 4) / 5
             });
 
             if congested {
