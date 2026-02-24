@@ -17,6 +17,8 @@ pub struct Connection {
     pub tenant_prefix: Option<String>,
     /// Dynamically create subscription filters incase they didn't exist during a publish
     pub dynamic_filters: bool,
+    /// Is this an admin connection
+    pub is_admin: bool,
     /// Clean session
     pub clean: bool,
     /// Subscriptions
@@ -54,6 +56,7 @@ impl Connection {
         client_id: String,
         clean: bool,
         dynamic_filters: bool,
+        is_admin: bool,
     ) -> Connection {
         let (client_id, tenant_prefix) = match cert_info {
             Some(cert_info) => {
@@ -72,6 +75,7 @@ impl Connection {
             client_id,
             tenant_prefix,
             dynamic_filters,
+            is_admin,
             clean,
             subscriptions: HashSet::default(),
             last_will: None,

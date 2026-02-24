@@ -46,6 +46,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // 2. Create the Admin Link (for monitoring and responding)
     // The "admin" client ID is privileged
     let mut admin_link = broker.admin_link("admin", 200)?;
+    admin_link.subscribe("#")?;
 
     // 3. Start the broker in a separate thread
     // Broker::start() is blocking and runs the network servers. We spawn it in a separate thread.
@@ -55,7 +56,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // 4. Background task for handling Admin messages
     tokio::spawn(async move {
-        // AdminLink will receive ALL messages flowing through the broker.
+        // AdminLink will receive messages matching our subscription.
         // We will filter incoming messages and respond appropriately.
         while let Ok(Some((publish, _client_info))) = admin_link.recv().await {
             let topic = std::str::from_utf8(&publish.topic).unwrap_or("");

@@ -1953,8 +1953,8 @@ fn validate_subscription(
         connection.tenant_prefix
     );
 
-    // Broker Connection can subscribe to any topic
-    if connection.client_id.starts_with("_broker") {
+    // Admin connections can subscribe to any topic
+    if connection.is_admin || connection.client_id.starts_with("_broker") {
         return Ok(())
     }
 

@@ -57,7 +57,8 @@ Before spawning the broker in the background, we request an `AdminLink`. The Adm
 
 ```rust
 // The "admin" client ID is privileged in this context
-let mut admin_link = broker.admin_link("admin")?;
+let mut admin_link = broker.admin_link("admin", 200)?;
+admin_link.subscribe("#")?;
 
 // Start the broker in a separate thread. `broker.start()` is a blocking 
 // operation that boots up all TCP listeners and background services.
@@ -67,7 +68,7 @@ thread::spawn(move || {
 ```
 
 ### 3. The Central Processor (Using AdminLink)
-The AdminLink acts as a firehose, automatically creating a subscription to `#` internally so it receives every packet. 
+The AdminLink acts as a firehose, but we need to explicitly subscribe to `#` so it receives every packet. 
 
 We spawn an asynchronous task to poll `admin_link.recv()`. When a message arrives, we match the topic pattern against `device/<DEVICEID>/update`. If it matches, we parse the ID, process the data, and use `admin_link.publish(...)` to fire a response.
 

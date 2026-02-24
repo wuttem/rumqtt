@@ -49,6 +49,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // 2. Create the Admin Link (for monitoring)
     // The "admin" client ID is privileged in this context
     let mut admin_link = broker.admin_link("admin", 200)?;
+    admin_link.subscribe("#")?;
 
     // 3. Create the Broker Controller (for management)
     let controller = broker.controller();
@@ -60,7 +61,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     });
 
     // Spawn a task to print messages received by the admin link
-    // Admin link automatically subscribes to "#" (all topics)
     tokio::spawn(async move {
         // AdminLink::recv() is async
         while let Ok(Some((publish, client_info))) = admin_link.recv().await {

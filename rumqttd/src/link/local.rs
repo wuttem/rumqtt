@@ -121,6 +121,7 @@ impl<'a> LinkBuilder<'a> {
             self.client_id.to_owned(),
             self.clean_session,
             self.dynamic_filters,
+            self.is_admin,
         );
 
         connection

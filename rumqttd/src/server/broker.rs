@@ -148,9 +148,7 @@ impl Broker {
                 .channel_capacity(channel_capacity)
                 .admin()
                 .build()?;
-        let mut tx = link_tx;
-        tx.subscribe("#")?;
-        Ok(crate::link::admin::AdminLink::new(tx, link_rx))
+        Ok(crate::link::admin::AdminLink::new(link_tx, link_rx))
     }
 
     pub fn get_broker_links(&mut self) -> Result<BrokerLinks, local::LinkError> {

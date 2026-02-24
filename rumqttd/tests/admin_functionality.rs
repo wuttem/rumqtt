@@ -34,6 +34,7 @@ async fn test_logic() {
     // 2. Create Admin Link
     let admin_client_id = "admin";
     let mut admin_link = broker.admin_link(admin_client_id, 200).unwrap();
+    admin_link.subscribe("#").unwrap();
     
     // 3. Connect a normal client
     let client_id = "client1";
